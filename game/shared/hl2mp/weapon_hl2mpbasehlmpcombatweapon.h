@@ -50,6 +50,29 @@ public:
 	virtual void	ItemHolsterFrame( void );
 
 protected:
+	float FoFActionSequenceDuration(
+		float flFallbackDuration,
+		bool bSetWeaponIdleTime = true );
+	bool FoFAutoReloadEnabled( const CBasePlayer *pOwner ) const;
+	void FoFEmitPrimaryAttack(
+		CBasePlayer *pOwner,
+		int nShots,
+		float flAutoAimScale,
+		float flDamage = 0.0f,
+		int iPlayerDamage = 0,
+		int nFlags = 0 );
+	void FoFEmitReloadAnimationEvent( CBasePlayer *pOwner );
+	void FoFPlayDryFire(
+		float flFallbackDuration,
+		bool bSetWeaponIdleTime = true );
+	bool FoFRejectUnderwaterPrimaryAttack( CBasePlayer *pOwner );
+
+#ifdef CLIENT_DLL
+	// FoF's SDK2013 client ancestor is 16 bytes larger than this public SDK
+	// branch.  Preserve that client-only gap so the real lowered/raise/holster
+	// fields, and every FoF-derived member, retain the original x86 layout.
+	unsigned char	m_FoFClientLayoutPad[0x10];
+#endif
 
 	bool			m_bLowered;			// Whether the viewmodel is raised or lowered
 	float			m_flRaiseTime;		// If lowered, the time we should raise the viewmodel

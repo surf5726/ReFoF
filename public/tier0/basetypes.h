@@ -124,6 +124,20 @@ T Max( T const &val1, T const &val2 )
 	return val1 > val2 ? val1 : val2;
 }
 
+#if defined( POSIX )
+template< class T, class U >
+inline auto min( T const &val1, U const &val2 ) -> decltype( val1 < val2 ? val1 : val2 )
+{
+	return val1 < val2 ? val1 : val2;
+}
+
+template< class T, class U >
+inline auto max( T const &val1, U const &val2 ) -> decltype( val1 > val2 ? val1 : val2 )
+{
+	return val1 > val2 ? val1 : val2;
+}
+#endif
+
 #endif
 
 #ifndef FALSE

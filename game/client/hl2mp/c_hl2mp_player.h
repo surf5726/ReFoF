@@ -10,6 +10,8 @@
 #pragma once
 
 class C_HL2MP_Player;
+class C_HL2MPRagdoll;
+class CHL2MPPlayerAnimState;
 #include "c_basehlplayer.h"
 #include "hl2mp_player_shared.h"
 #include "beamdraw.h"
@@ -36,6 +38,13 @@ public:
 	
 	virtual int DrawModel( int flags );
 	virtual void AddEntity( void );
+	virtual void UpdateClientSideAnimation( void );
+	void SetServerIntendedCycle( float intended ) OVERRIDE;
+	float GetServerIntendedCycle( void ) OVERRIDE;
+	CHL2MPPlayerAnimState *GetFoFPlayerAnimState() const
+	{
+		return m_PlayerAnimState;
+	}
 
 	QAngle GetAnimEyeAngles( void ) { return m_angEyeAngles; }
 	Vector GetAttackSpread( CBaseCombatWeapon *pWeapon, CBaseEntity *pTarget = NULL );
@@ -61,14 +70,16 @@ public:
 	virtual void PlayStepSound( Vector &vecOrigin, surfacedata_t *psurface, float fvol, bool force );
 	virtual void PreThink( void );
 	virtual void DoImpactEffect( trace_t &tr, int nDamageType );
+	virtual bool ShouldCollide(
+		int nCollisionGroup, int nContentsMask ) const;
 	IRagdoll* GetRepresentativeRagdoll() const;
 	virtual void CalcView( Vector &eyeOrigin, QAngle &eyeAngles, float &zNear, float &zFar, float &fov );
 	virtual const QAngle& EyeAngles( void );
 
 	
 	bool	CanSprint( void );
-	void	StartSprinting( void );
-	void	StopSprinting( void );
+	virtual void StartSprinting( void );
+	virtual void StopSprinting( void );
 	void	HandleSpeedChanges( void );
 	void	UpdateLookAt( void );
 	void	Initialize( void );
@@ -80,9 +91,10 @@ public:
 	HL2MPPlayerState State_Get() const;
 
 	// Walking
-	void StartWalking( void );
-	void StopWalking( void );
-	bool IsWalking( void ) { return m_fIsWalking; }
+	virtual void StartWalking( void );
+	virtual void StopWalking( void );
+	virtual bool IsWalking( void ) { return m_fIsWalking; }
+	virtual void UpdatePlayerFlashlight( void );
 
 	virtual void PostThink( void );
 
@@ -90,7 +102,7 @@ private:
 	
 	C_HL2MP_Player( const C_HL2MP_Player & );
 
-	CPlayerAnimState m_PlayerAnimState;
+	CHL2MPPlayerAnimState *m_PlayerAnimState;
 
 	QAngle	m_angEyeAngles;
 
@@ -121,12 +133,17 @@ private:
 
 	int	  m_iPlayerSoundType;
 
+	void UpdateFlashlightBeam( void );
 	void ReleaseFlashlight( void );
+	void ReleasePlayerFlashlight( void );
 	Beam_t	*m_pFlashlightBeam;
+	class CFlashlightEffect *m_pPlayerFlashlight;
 
-	CNetworkVar( HL2MPPlayerState, m_iPlayerState );	
+	CNetworkVar( HL2MPPlayerState, m_iPlayerState );
 
 	bool m_fIsWalking;
+	int m_cycleLatch;
+	float m_flServerIntendedCycle;
 };
 
 inline C_HL2MP_Player *ToHL2MPPlayer( CBaseEntity *pEntity )
@@ -168,6 +185,7 @@ private:
 	EHANDLE	m_hPlayer;
 	CNetworkVector( m_vecRagdollVelocity );
 	CNetworkVector( m_vecRagdollOrigin );
+	bool	m_bStickRagdoll;
 };
 
 #endif //HL2MP_PLAYER_H

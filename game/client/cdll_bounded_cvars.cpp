@@ -8,6 +8,7 @@
 #include "cbase.h"
 #include "cdll_bounded_cvars.h"
 #include "convar_serverbounded.h"
+#include "fof/fof_client_settings.h"
 #include "tier0/icommandline.h"
 
 
@@ -67,7 +68,9 @@ public:
 	  ConVar_ServerBounded( "cl_interp_ratio", 
 		  "2.0", 
 		  FCVAR_USERINFO | FCVAR_NOT_CONNECTED, 
-		  "Sets the interpolation amount (final amount is cl_interp_ratio / cl_updaterate)." )
+		  "Sets the interpolation amount (final amount is cl_interp_ratio / cl_updaterate).",
+		  true, FoFClientNetworkSettings::kInterpRatioMinimum,
+		  true, FoFClientNetworkSettings::kInterpRatioMaximum )
 	  {
 	  }
 
@@ -101,7 +104,9 @@ public:
 	  ConVar_ServerBounded( "cl_interp", 
 		  "0.1", 
 		  FCVAR_USERINFO | FCVAR_NOT_CONNECTED, 
-		  "Sets the interpolation amount (bounded on low side by server interp ratio settings).", true, 0.0f, true, 0.5f )
+		  "Sets the interpolation amount (bounded on low side by server interp ratio settings).",
+		  true, FoFClientNetworkSettings::kInterpMinimum,
+		  true, FoFClientNetworkSettings::kInterpMaximum )
 	  {
 	  }
 
@@ -141,4 +146,3 @@ float GetClientInterpAmount()
 		return 0.1;
 	}
 }
-

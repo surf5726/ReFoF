@@ -15,6 +15,9 @@
 class CBaseToggle : public CBaseEntity
 {
 	DECLARE_CLASS( CBaseToggle, CBaseEntity );
+#if defined( HL2MP )
+	DECLARE_SERVERCLASS();
+#endif
 public:
 	CBaseToggle();
 
@@ -36,7 +39,12 @@ public:
 
 	float				m_flHeight;
 	EHANDLE				m_hActivator;
+#if defined( HL2MP )
+	CNetworkVar( float, flTSpeed );
+	CNetworkVector( m_vecFinalDest );
+#else
 	Vector				m_vecFinalDest;
+#endif
 	QAngle				m_vecFinalAngle;
 
 	int					m_movementType;

@@ -11,6 +11,7 @@
 #include "utldict.h"
 #include "multiplayer_animstate.h"
 #include "activitylist.h"
+#include "fof/fof_player_shared.h"
 
 #ifdef CLIENT_DLL
 #include "c_baseplayer.h"
@@ -36,6 +37,23 @@ ConVar anim_showstate( "anim_showstate", "-1", FCVAR_CHEAT | FCVAR_REPLICATED | 
 ConVar anim_showstatelog( "anim_showstatelog", "0", FCVAR_CHEAT | FCVAR_REPLICATED | FCVAR_DEVELOPMENTONLY, "1 to output anim_showstate to Msg(). 2 to store in AnimState.log. 3 for both." );
 ConVar mp_showgestureslots( "mp_showgestureslots", "-1", FCVAR_CHEAT | FCVAR_REPLICATED | FCVAR_DEVELOPMENTONLY, "Show multiplayer client/server gesture slot information for the specified player index (-1 for no one)." );
 ConVar mp_slammoveyaw( "mp_slammoveyaw", "0", FCVAR_REPLICATED | FCVAR_DEVELOPMENTONLY, "Force movement yaw along an animation path." );
+
+static bool FoFAnimStateUsesFreeHorseAim( CBasePlayer *pBasePlayer )
+{
+	CFoF_Player *pPlayer = dynamic_cast< CFoF_Player * >( pBasePlayer );
+	if ( !pPlayer || !pPlayer->IsOnFoFHorse() ||
+		!FoFUsesHorseFreeAim( pPlayer ) )
+	{
+		return false;
+	}
+
+	CBaseCombatWeapon *pWeapon = pPlayer->GetActiveWeapon();
+	if ( !pWeapon )
+		return false;
+
+	const int nWeaponID = pWeapon->FoFWeaponID();
+	return nWeaponID != 0 && nWeaponID != 8;
+}
 
 //-----------------------------------------------------------------------------
 // Purpose: 
@@ -99,10 +117,6 @@ CMultiPlayerAnimState::CMultiPlayerAnimState( CBasePlayer *pPlayer, MultiPlayerM
 
 	Init( pPlayer, movementData );
 
-	// movement playback options
-	m_nMovementSequence = -1;
-	m_LegAnimType = LEGANIM_9WAY;
-
 	InitGestureSlots();
 }
 
@@ -140,7 +154,6 @@ void CMultiPlayerAnimState::ClearAnimationState()
 	m_bDying = false;
 	m_bCurrentFeetYawInitialized = false;
 	m_flLastAnimationStateClearTime = gpGlobals->curtime;
-	m_nSpecificMainSequence = -1;
 
 	ResetGestureSlots();
 }
@@ -920,7 +933,30 @@ Activity CMultiPlayerAnimState::CalcMainActivity()
 {
 	Activity idealActivity = ACT_MP_STAND_IDLE;
 
-	if ( HandleJumping( idealActivity ) || 
+	// FoF selects two base activities before the jumping, ducking, swimming and
+	// dying handlers run. An unarmed player uses the
+	// ordinary idle activity; a sighted long gun uses the rifle-aim idle.
+	CBasePlayer *pBasePlayer = GetBasePlayer();
+	if ( pBasePlayer )
+	{
+		CBaseCombatWeapon *pWeapon = pBasePlayer->GetActiveWeapon();
+		if ( !pWeapon )
+		{
+			idealActivity = ACT_IDLE;
+		}
+		else if ( pWeapon->FoFWeaponID() == 3 )
+		{
+			CFoF_Player *pFoFPlayer =
+				dynamic_cast< CFoF_Player * >( pBasePlayer );
+			if ( pFoFPlayer &&
+				pFoFPlayer->GetFoFSightExpFactor() > 0.75f )
+			{
+				idealActivity = ACT_IDLE_RIFLE;
+			}
+		}
+	}
+
+	if ( HandleJumping( idealActivity ) ||
 		HandleDucking( idealActivity ) || 
 		HandleSwimming( idealActivity ) || 
 		HandleDying( idealActivity ) )
@@ -984,7 +1020,7 @@ float CMultiPlayerAnimState::GetCurrentMaxGroundSpeed()
 	float prevX = GetBasePlayer()->GetPoseParameter( m_PoseParameterData.m_iMoveX );
 	float prevY = GetBasePlayer()->GetPoseParameter( m_PoseParameterData.m_iMoveY );
 
-	float d = MAX( fabs( prevX ), fabs( prevY ) );
+	float d = sqrtf( prevX * prevX + prevY * prevY );
 	float newX, newY;
 	if ( d == 0.0 )
 	{ 
@@ -1009,38 +1045,20 @@ float CMultiPlayerAnimState::GetCurrentMaxGroundSpeed()
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: 
-// Input  : *bIsMoving - 
-// Output : float
-//-----------------------------------------------------------------------------
-float CMultiPlayerAnimState::CalcMovementSpeed( bool *bIsMoving )
-{
-	// Get the player's current velocity and speed.
-	Vector vecVelocity;
-	GetOuterAbsVelocity( vecVelocity );
-	float flSpeed = vecVelocity.Length2D();
-
-	if ( flSpeed > MOVING_MINIMUM_SPEED )
-	{
-		*bIsMoving = true;
-		return flSpeed;
-	}
-
-	*bIsMoving = false;
-	return 0.0f;
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: 
-// Input  : *bIsMoving - 
+// Purpose:
+// Input  : *bIsMoving -
 // Output : float
 //-----------------------------------------------------------------------------
 float CMultiPlayerAnimState::CalcMovementPlaybackRate( bool *bIsMoving )
 {
-	float flSpeed = CalcMovementSpeed( bIsMoving );
+	Vector vecVelocity;
+	GetOuterAbsVelocity( vecVelocity );
+	float flSpeed = vecVelocity.Length2D();
+	bool bMoving = flSpeed > MOVING_MINIMUM_SPEED;
+
+	*bIsMoving = false;
 	float flReturn = 1.0f;
-	// If we are moving.
-	if ( *bIsMoving )
+	if ( bMoving )
 	{
 		//		float flGroundSpeed = GetInterpolatedGroundSpeed();
 		float flGroundSpeed = GetCurrentMaxGroundSpeed();
@@ -1054,6 +1072,8 @@ float CMultiPlayerAnimState::CalcMovementPlaybackRate( bool *bIsMoving )
 			flReturn = flSpeed / flGroundSpeed;
 			flReturn = clamp( flReturn, 0.01f, 10.0f );
 		}
+
+		*bIsMoving = true;
 	}
 
 	return flReturn;
@@ -1229,7 +1249,9 @@ void CMultiPlayerAnimState::UpdateGestureLayer( CStudioHdr *pStudioHdr, GestureS
 
 	// Get the current cycle.
 	float flCycle = pGesture->m_pAnimLayer->m_flCycle;
-	flCycle += pPlayer->GetSequenceCycleRate( pStudioHdr, pGesture->m_pAnimLayer->m_nSequence ) * gpGlobals->frametime * GetGesturePlaybackRate() * pGesture->m_pAnimLayer->m_flPlaybackRate;
+	flCycle += pPlayer->GetSequenceCycleRate(
+		pStudioHdr, pGesture->m_pAnimLayer->m_nSequence ) *
+		gpGlobals->frametime;
 
 	pGesture->m_pAnimLayer->m_flPrevCycle =	pGesture->m_pAnimLayer->m_flCycle;
 	pGesture->m_pAnimLayer->m_flCycle = flCycle;
@@ -1350,36 +1372,23 @@ bool CMultiPlayerAnimState::SetupPoseParameters( CStudioHdr *pStudioHdr )
 	if ( !pStudioHdr )
 		return false;
 
-	m_bPoseParameterInit = true;
-
 	// Look for the movement blenders.
 	m_PoseParameterData.m_iMoveX = GetBasePlayer()->LookupPoseParameter( pStudioHdr, "move_x" );
 	m_PoseParameterData.m_iMoveY = GetBasePlayer()->LookupPoseParameter( pStudioHdr, "move_y" );
-	/*
 	if ( ( m_PoseParameterData.m_iMoveX < 0 ) || ( m_PoseParameterData.m_iMoveY < 0 ) )
 		return false;
-	*/
 
 	// Look for the aim pitch blender.
 	m_PoseParameterData.m_iAimPitch = GetBasePlayer()->LookupPoseParameter( pStudioHdr, "body_pitch" );
-	/*
 	if ( m_PoseParameterData.m_iAimPitch < 0 )
 		return false;
-	*/
 
 	// Look for aim yaw blender.
 	m_PoseParameterData.m_iAimYaw = GetBasePlayer()->LookupPoseParameter( pStudioHdr, "body_yaw" );
-	/*
 	if ( m_PoseParameterData.m_iAimYaw < 0 )
 		return false;
-	*/
 
-	m_PoseParameterData.m_iMoveYaw = GetBasePlayer()->LookupPoseParameter( pStudioHdr, "move_yaw" );
-	m_PoseParameterData.m_iMoveScale = GetBasePlayer()->LookupPoseParameter( pStudioHdr, "move_scale" );
-	/*
-	if ( ( m_PoseParameterData.m_iMoveYaw < 0 ) || ( m_PoseParameterData.m_iMoveScale < 0 ) )
-		return false;
-	*/
+	m_bPoseParameterInit = true;
 
 	return true;
 }
@@ -1418,177 +1427,46 @@ float SnapYawTo( float flValue )
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: double check that the movement animations actually have movement
-//-----------------------------------------------------------------------------
-void CMultiPlayerAnimState::DoMovementTest( CStudioHdr *pStudioHdr, float flX, float flY )
-{
-	GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveX, flX );
-	GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveY, flY );
-
-#ifdef STAGING_ONLY
-	float flTestSpeed = GetBasePlayer()->GetSequenceGroundSpeed( m_nMovementSequence );
-	if ( flTestSpeed < 10.0f )
-	{
-		Warning( "%s : %s (X %.0f Y %.0f) missing movement\n", pStudioHdr->pszName(), GetBasePlayer()->GetSequenceName( m_nMovementSequence ), flX, flY );
-	}
-#endif
-
-	/*
-	GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveX, flX );
-	GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveY, flY );
-	float flDuration = GetBasePlayer()->SequenceDuration( m_nMovementSequence );
-
-	GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveX, 1.0f );
-	GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveY, 0.0f );
-	float flForward = GetBasePlayer()->SequenceDuration( m_nMovementSequence );
-
-	GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveX, 0.0f );
-	GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveY, 0.0f );
-	float flCenter = GetBasePlayer()->SequenceDuration( m_nMovementSequence );
-
-	if ( flDuration > flForward * 1.1f || flDuration < flForward * 0.9f )
-	{
-		Warning( "%s : %s (X %.0f Y %.0f) mismatched duration with forward  %.1f vs %.1f\n", pStudioHdr->pszName(), GetBasePlayer()->GetSequenceName( m_nMovementSequence ), flX, flY, flDuration, flForward );
-	}
-
-	if ( flDuration > flCenter * 1.1f || flDuration < flCenter * 0.9f )
-	{
-		Warning( "%s : %s (X %.0f Y %.0f) mismatched duration with center  %.1f vs %.1f\n", pStudioHdr->pszName(), GetBasePlayer()->GetSequenceName( m_nMovementSequence ), flX, flY, flDuration, flCenter );
-	}
-	*/
-}
-
-
-void CMultiPlayerAnimState::DoMovementTest( CStudioHdr *pStudioHdr )
-{
-	if ( m_LegAnimType == LEGANIM_9WAY )
-	{
-		DoMovementTest( pStudioHdr, -1.0f, -1.0f );
-		DoMovementTest( pStudioHdr, -1.0f,  0.0f );
-		DoMovementTest( pStudioHdr, -1.0f,  1.0f );
-		DoMovementTest( pStudioHdr,  0.0f, -1.0f );
-		DoMovementTest( pStudioHdr,  0.0f,  1.0f );
-		DoMovementTest( pStudioHdr,  1.0f, -1.0f );
-		DoMovementTest( pStudioHdr,  1.0f,  0.0f );
-		DoMovementTest( pStudioHdr,  1.0f,  1.0f );
-	}
-}
-
-void CMultiPlayerAnimState::GetMovementFlags( CStudioHdr *pStudioHdr )
-{
-	if ( m_nMovementSequence == GetBasePlayer()->GetSequence() )
-	{
-		return;
-	}
-
-	m_nMovementSequence = GetBasePlayer()->GetSequence(); 
-	m_LegAnimType = LEGANIM_9WAY;
-
-	KeyValues *seqKeyValues = GetBasePlayer()->GetSequenceKeyValues( m_nMovementSequence );
-	// Msg("sequence %d : %s (%d)\n", sequence,  GetOuter()->GetSequenceName( sequence ), seqKeyValues != NULL );
-	if (seqKeyValues)
-	{
-		KeyValues *pkvMovement = seqKeyValues->FindKey( "movement" );
-		if (pkvMovement)
-		{
-			const char *szStyle = pkvMovement->GetString();
-			if ( V_stricmp( szStyle, "robot2" ) == 0 )
-			{
-				m_LegAnimType = LEGANIM_8WAY;
-			}
-		}
-		seqKeyValues->deleteThis();
-	}
-
-	// skip tests if it's not a movement animation
-	if ( m_nMovementSequence < 0 || !( GetBasePlayer()->GetFlags() & FL_ONGROUND ) || pStudioHdr->pSeqdesc( m_nMovementSequence ).groupsize[0] == 1 )
-	{
-		return;
-	}
-
-	DoMovementTest( pStudioHdr );
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: 
-// Input  : *pStudioHdr - 
-//-----------------------------------------------------------------------------
 void CMultiPlayerAnimState::ComputePoseParam_MoveYaw( CStudioHdr *pStudioHdr )
 {
-	// Get the estimated movement yaw.
 	EstimateYaw();
 
-	// Get the view yaw.
-	float flAngle = AngleNormalize( m_flEyeYaw );
+	CFoF_Player *pFoFPlayer =
+		dynamic_cast< CFoF_Player * >( GetBasePlayer() );
+	const bool bOnHorse = pFoFPlayer && pFoFPlayer->IsOnFoFHorse();
 
-	// Calc side to side turning - the view vs. movement yaw.
-	float flYaw = flAngle - m_PoseParameterData.m_flEstimateYaw;
-	flYaw = AngleNormalize( -flYaw );
+	float flReferenceYaw = AngleNormalize( m_flEyeYaw );
+	if ( FoFAnimStateUsesFreeHorseAim( GetBasePlayer() ) )
+		flReferenceYaw = AngleNormalize(
+			FoFHorseAngles( GetBasePlayer() )[YAW] );
 
-	// Get the current speed the character is running.
-	bool bIsMoving;
-	float flSpeed = CalcMovementSpeed( &bIsMoving );
-	
-	// Setup the 9-way blend parameters based on our speed and direction.
+	float flYaw = AngleNormalize(
+		-( flReferenceYaw - m_PoseParameterData.m_flEstimateYaw ) );
+
+	bool bIsMoving = false;
+	float flPlaybackRate = CalcMovementPlaybackRate( &bIsMoving );
+	if ( bOnHorse )
+		flPlaybackRate *= 100.0f;
+
 	Vector2D vecCurrentMoveYaw( 0.0f, 0.0f );
 	if ( bIsMoving )
 	{
-		GetMovementFlags( pStudioHdr );
-
 		if ( mp_slammoveyaw.GetBool() )
-		{
 			flYaw = SnapYawTo( flYaw );
-		}
 
-		if ( m_LegAnimType == LEGANIM_9WAY )
-		{
-			// convert YAW back into vector
-			vecCurrentMoveYaw.x = cos( DEG2RAD( flYaw ) );
-			vecCurrentMoveYaw.y = -sin( DEG2RAD( flYaw ) );
-			// push edges out to -1 to 1 box
-			float flInvScale = MAX( fabs( vecCurrentMoveYaw.x ), fabs( vecCurrentMoveYaw.y ) );
-			if ( flInvScale != 0.0f )
-			{
-				vecCurrentMoveYaw.x /= flInvScale;
-				vecCurrentMoveYaw.y /= flInvScale;
-			}
-
-			// find what speed was actually authored
-			GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveX, vecCurrentMoveYaw.x );
-			GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveY, vecCurrentMoveYaw.y );
-			float flMaxSpeed = GetBasePlayer()->GetSequenceGroundSpeed( GetBasePlayer()->GetSequence() );
-
-			// scale playback
-			if ( flMaxSpeed > flSpeed )
-			{
-				vecCurrentMoveYaw.x *= flSpeed / flMaxSpeed;
-				vecCurrentMoveYaw.y *= flSpeed / flMaxSpeed;
-			}
-
-			// Set the 9-way blend movement pose parameters.
-			GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveX, vecCurrentMoveYaw.x );
-			GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveY, vecCurrentMoveYaw.y );
-		}
-		else
-		{
-			// find what speed was actually authored
-			GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveYaw, flYaw );
-			GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveScale, 1.0f );
-			float flMaxSpeed = GetBasePlayer()->GetSequenceGroundSpeed( GetBasePlayer()->GetSequence() );
-
-			// scale playback
-			if ( flMaxSpeed > flSpeed )
-			{
-				GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveScale, flSpeed / flMaxSpeed );
-			}
-		}
+		vecCurrentMoveYaw.x =
+			cosf( DEG2RAD( flYaw ) ) * flPlaybackRate;
+		vecCurrentMoveYaw.y =
+			-sinf( DEG2RAD( flYaw ) ) * flPlaybackRate;
 	}
-	else
-	{
-		// Set the 9-way blend movement pose parameters.
-		GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveX, 0.0f );
-		GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iMoveY, 0.0f );
-	}
+
+	GetBasePlayer()->SetPoseParameter(
+		pStudioHdr, m_PoseParameterData.m_iMoveX,
+		vecCurrentMoveYaw.x );
+	// The model's lateral pose axis is opposite the movement-yaw vector.
+	GetBasePlayer()->SetPoseParameter(
+		pStudioHdr, m_PoseParameterData.m_iMoveY,
+		-vecCurrentMoveYaw.y );
 
 	m_DebugAnimData.m_vecMoveYaw = vecCurrentMoveYaw;
 }
@@ -1642,7 +1520,8 @@ void CMultiPlayerAnimState::ComputePoseParam_AimPitch( CStudioHdr *pStudioHdr )
 	float flAimPitch = m_flEyePitch;
 
 	// Set the aim pitch pose parameter and save.
-	GetBasePlayer()->SetPoseParameter( pStudioHdr, m_PoseParameterData.m_iAimPitch, -flAimPitch );
+	GetBasePlayer()->SetPoseParameter(
+		pStudioHdr, m_PoseParameterData.m_iAimPitch, flAimPitch );
 	m_DebugAnimData.m_flAimPitch = flAimPitch;
 }
 
@@ -1787,7 +1666,11 @@ const QAngle& CMultiPlayerAnimState::GetRenderAngles()
 void CMultiPlayerAnimState::GetOuterAbsVelocity( Vector& vel )
 {
 #if defined( CLIENT_DLL )
-	GetBasePlayer()->EstimateAbsVelocity( vel );
+	CBasePlayer *pPlayer = GetBasePlayer();
+	if ( pPlayer == C_BasePlayer::GetLocalPlayer() )
+		vel = pPlayer->GetAbsVelocity();
+	else
+		pPlayer->EstimateAbsVelocity( vel );
 #else
 	vel = GetBasePlayer()->GetAbsVelocity();
 #endif

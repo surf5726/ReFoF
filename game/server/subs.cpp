@@ -144,6 +144,9 @@ BEGIN_DATADESC( CBaseToggle )
 	DEFINE_FIELD( m_vecAngle2, FIELD_VECTOR ),		// UNDONE: Position could go through transition, but also angle?
 	DEFINE_FIELD( m_flHeight, FIELD_FLOAT ),
 	DEFINE_FIELD( m_hActivator, FIELD_EHANDLE ),
+#if defined( HL2MP )
+	DEFINE_FIELD( flTSpeed, FIELD_FLOAT ),
+#endif
 	DEFINE_FIELD( m_vecFinalDest, FIELD_POSITION_VECTOR ),
 	DEFINE_FIELD( m_vecFinalAngle, FIELD_VECTOR ),
 	DEFINE_FIELD( m_sMaster, FIELD_STRING),
@@ -151,9 +154,19 @@ BEGIN_DATADESC( CBaseToggle )
 
 END_DATADESC()
 
+#if defined( HL2MP )
+IMPLEMENT_SERVERCLASS_ST( CBaseToggle, DT_BaseToggle )
+	SendPropVector( SENDINFO( m_vecFinalDest ), -1, SPROP_COORD ),
+	SendPropFloat( SENDINFO( flTSpeed ), 0, SPROP_NOSCALE ),
+END_SEND_TABLE()
+#endif
+
 
 CBaseToggle::CBaseToggle()
 {
+#if defined( HL2MP )
+	flTSpeed = 0.0f;
+#endif
 #ifdef _DEBUG
 	// necessary since in debug, we initialize vectors to NAN for debugging
 	m_vecPosition1.Init();
@@ -345,5 +358,3 @@ float CBaseToggle::AxisDelta( int flags, const QAngle &angle1, const QAngle &ang
 
 	return angle1.y - angle2.y;
 }
-
-

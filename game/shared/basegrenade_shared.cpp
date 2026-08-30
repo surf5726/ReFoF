@@ -60,18 +60,30 @@ void SendProxy_CropFlagsToPlayerFlagBitsLength( const SendProp *pProp, const voi
 
 IMPLEMENT_NETWORKCLASS_ALIASED( BaseGrenade, DT_BaseGrenade )
 
-BEGIN_NETWORK_TABLE( CBaseGrenade, DT_BaseGrenade )
 #if !defined( CLIENT_DLL )
+#if defined( GAME_DLL )
+BEGIN_SEND_TABLE_NOBASE( CBaseGrenade, DT_BaseGrenade )
+	SendPropDataTable( "baseclass", 0, CBaseAnimating::m_pClassSendTable,
+		SendProxy_DataTableToDataTable ),
+#else
+BEGIN_SEND_TABLE( CBaseGrenade, DT_BaseGrenade )
+#endif
 	SendPropFloat( SENDINFO( m_flDamage ), 10, SPROP_ROUNDDOWN, 0.0, 256.0f ),
 	SendPropFloat( SENDINFO( m_DmgRadius ), 10, SPROP_ROUNDDOWN, 0.0, 1024.0f ),
 	SendPropInt( SENDINFO( m_bIsLive ), 1, SPROP_UNSIGNED ),
 //	SendPropTime( SENDINFO( m_flDetonateTime ) ),
 	SendPropEHandle( SENDINFO( m_hThrower ) ),
 
-	SendPropVector( SENDINFO( m_vecVelocity ), 0, SPROP_NOSCALE ), 
+	SendPropVector( SENDINFO( m_vecVelocity ), 0, SPROP_NOSCALE ),
 	// HACK: Use same flag bits as player for now
 	SendPropInt			( SENDINFO(m_fFlags), PLAYER_FLAG_BITS, SPROP_UNSIGNED, SendProxy_CropFlagsToPlayerFlagBitsLength ),
+END_SEND_TABLE()
 #else
+	// FoF exposes DT_BaseGrenade directly over DT_BaseAnimating.
+	// Keep the SDK's C_BaseProjectile C++ ancestry for local object/vtable
+	// safety, but describe the exact original network ancestry to the decoder.
+BEGIN_RECV_TABLE_NOBASE( CBaseGrenade, DT_BaseGrenade )
+	RecvPropDataTable( "baseclass", 0, 0, &REFERENCE_RECV_TABLE( DT_BaseAnimating ) ),
 	RecvPropFloat( RECVINFO( m_flDamage ) ),
 	RecvPropFloat( RECVINFO( m_DmgRadius ) ),
 	RecvPropInt( RECVINFO( m_bIsLive ) ),
@@ -82,8 +94,8 @@ BEGIN_NETWORK_TABLE( CBaseGrenade, DT_BaseGrenade )
 	RecvPropVector( RECVINFO(m_vecVelocity), 0, RecvProxy_LocalVelocity ),
 
 	RecvPropInt( RECVINFO( m_fFlags ) ),
+END_RECV_TABLE()
 #endif
-END_NETWORK_TABLE()
 
 LINK_ENTITY_TO_CLASS( grenade, CBaseGrenade );
 
@@ -128,6 +140,8 @@ void CBaseGrenade::Explode( trace_t *pTrace, int bitsDamageType )
 
 	Vector vecAbsOrigin = GetAbsOrigin();
 	int contents = UTIL_PointContents ( vecAbsOrigin );
+	const float flExplosionScale = m_flDamage < 100.0f ?
+		1.0f : m_DmgRadius * 0.03f;
 
 #if defined( TF_DLL )
 	// Since this code only runs on the server, make sure it shows the tempents it creates.
@@ -144,7 +158,7 @@ void CBaseGrenade::Explode( trace_t *pTrace, int bitsDamageType )
 		te->Explosion( filter, -1.0, // don't apply cl_interp delay
 			&vecAbsOrigin,
 			!( contents & MASK_WATER ) ? g_sModelIndexFireball : g_sModelIndexWExplosion,
-			m_DmgRadius * .03, 
+			flExplosionScale,
 			25,
 			TE_EXPLFLAG_NONE,
 			m_DmgRadius,
@@ -158,7 +172,7 @@ void CBaseGrenade::Explode( trace_t *pTrace, int bitsDamageType )
 		te->Explosion( filter, -1.0, // don't apply cl_interp delay
 			&vecAbsOrigin, 
 			!( contents & MASK_WATER ) ? g_sModelIndexFireball : g_sModelIndexWExplosion,
-			m_DmgRadius * .03, 
+			flExplosionScale,
 			25,
 			TE_EXPLFLAG_NONE,
 			m_DmgRadius,
@@ -178,7 +192,9 @@ void CBaseGrenade::Explode( trace_t *pTrace, int bitsDamageType )
 
 	UTIL_DecalTrace( pTrace, "Scorch" );
 
-	EmitSound( "BaseGrenade.Explode" );
+	EmitSound( m_flDamage > 200.0f ? "BaseExplosionEffect.SoundLoud" :
+		m_flDamage > 100.0f ? "BaseExplosionEffect.Sound" :
+		"BaseExplosionEffect.SoundYellow" );
 
 	SetThink( &CBaseGrenade::SUB_Remove );
 	SetTouch( NULL );
@@ -300,7 +316,7 @@ void CBaseGrenade::Detonate( void )
 
 	Explode( &tr, DMG_BLAST );
 
-	if ( GetShakeAmplitude() )
+	if ( m_flDamage > 100.0f && GetShakeAmplitude() )
 	{
 		UTIL_ScreenShake( GetAbsOrigin(), GetShakeAmplitude(), 150.0, 1.0, GetShakeRadius(), SHAKE_START );
 	}
@@ -488,6 +504,9 @@ void CBaseGrenade::Precache( void )
 	BaseClass::Precache( );
 
 	PrecacheScriptSound( "BaseGrenade.Explode" );
+	PrecacheScriptSound( "BaseExplosionEffect.Sound" );
+	PrecacheScriptSound( "BaseExplosionEffect.SoundLoud" );
+	PrecacheScriptSound( "BaseExplosionEffect.SoundYellow" );
 }
 
 //-----------------------------------------------------------------------------
@@ -542,17 +561,3 @@ CBaseGrenade::CBaseGrenade(void)
 
 	SetSimulatedEveryTick( true );
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-

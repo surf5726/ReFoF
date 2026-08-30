@@ -4,6 +4,7 @@
 
 
 #include "cbase.h"
+#include "fof/fof_hud_menu.h"
 #include "hud.h"
 #include "hudelement.h"
 #include "hud_macros.h"
@@ -1779,6 +1780,9 @@ void CHudVote::OnThink()
 //-----------------------------------------------------------------------------
 bool CHudVote::ShouldDraw( void )
 {
+	if ( FoFShouldHideStockVoteMenu() )
+		return false;
+
 	return ( m_bVotingActive || gpGlobals->curtime < m_flHideTime );
 }
 
@@ -1797,4 +1801,3 @@ bool CHudVote::IsVoteUIActive( void )
 {
 	return m_bShowVoteActivePanel;
 }
-

@@ -16,6 +16,8 @@
 #include "dlight.h"
 #include "tier0/icommandline.h"
 
+#include "fof/fof_combat_effects.h"
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -26,7 +28,7 @@ CLIENTEFFECT_REGISTER_END()
 
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 // Input  : *pRecvProp - 
 //			*pStruct - 
 //			*pVarData - 
@@ -269,6 +271,7 @@ void C_FireSmoke::SpawnSmoke( void )
 
 IMPLEMENT_CLIENTCLASS_DT( C_EntityFlame, DT_EntityFlame, CEntityFlame )
 	RecvPropEHandle(RECVINFO(m_hEntAttached)),
+	RecvPropInt(RECVINFO(m_nMode)),
 END_RECV_TABLE()
 
 //-----------------------------------------------------------------------------
@@ -278,6 +281,7 @@ C_EntityFlame::C_EntityFlame( void ) :
 m_hEffect( NULL )
 {
 	m_hOldAttached = NULL;
+	m_nMode = 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -332,11 +336,9 @@ void C_EntityFlame::CreateEffect( void )
 		m_hEffect = NULL;
 	}
 
-#ifdef TF_CLIENT_DLL
-	m_hEffect = ParticleProp()->Create( "burningplayer_red", PATTACH_ABSORIGIN_FOLLOW );
-#else
-	m_hEffect = ParticleProp()->Create( "burning_character", PATTACH_ABSORIGIN_FOLLOW );
-#endif
+	m_hEffect = ParticleProp()->Create(
+		FoFSelectFireParticle( m_nMode, m_hEntAttached.Get() ),
+		PATTACH_ABSORIGIN_FOLLOW );
 
 	if ( m_hEffect )
 	{

@@ -7,9 +7,125 @@
 
 #include "cbase.h"
 #include "ammodef.h"
+#include "fof/fof_player_weapons.h"
+#include "fof/fof_weapon_properties.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
+
+bool CBaseCombatCharacter::Weapon_Switch(
+	CBaseCombatWeapon *pWeapon, int viewmodelindex )
+{
+	if ( pWeapon == NULL )
+		return false;
+
+	CBasePlayer *pPlayer = ToBasePlayer( this );
+	if ( pPlayer && FoFPotionBlocksWeaponSelection( pPlayer, pWeapon ) )
+		return false;
+
+	const bool bForceHolsterBoth = pPlayer &&
+		( FoFWeaponHasActualReloadPresentation( GetActiveWeapon1() ) ||
+		  FoFWeaponHasActualReloadPresentation( GetActiveWeapon2() ) );
+	(void)viewmodelindex;
+
+	if ( m_hActiveWeapon.Get() == pWeapon )
+	{
+		if ( m_hActiveWeapon->IsWeaponVisible() &&
+			!m_hActiveWeapon->IsHolstered() )
+		{
+			return false;
+		}
+		return m_hActiveWeapon->Deploy();
+	}
+
+	if ( m_hActiveWeapon2.Get() == pWeapon )
+	{
+		if ( m_hActiveWeapon2->IsWeaponVisible() )
+			return false;
+		return m_hActiveWeapon2->Deploy();
+	}
+
+	if ( !Weapon_CanSwitchTo( pWeapon ) )
+		return false;
+
+	if ( m_hActiveWeapon )
+	{
+		const bool bKeepFirst = pWeapon->IsSecondGun() &&
+			m_hActiveWeapon->CanDualWield() && !bForceHolsterBoth;
+		if ( !bKeepFirst )
+		{
+			if ( !m_hActiveWeapon->Holster( pWeapon ) )
+				return false;
+			m_hActiveWeapon = NULL;
+		}
+	}
+
+	if ( m_hActiveWeapon2 )
+	{
+		const bool bKeepSecond = !pWeapon->IsSecondGun() &&
+			pWeapon->CanDualWield() && !bForceHolsterBoth;
+		if ( !bKeepSecond )
+		{
+			if ( !m_hActiveWeapon2->Holster( pWeapon ) )
+				return false;
+			m_hActiveWeapon2 = NULL;
+		}
+	}
+
+	if ( pWeapon->IsSecondGun() )
+		m_hActiveWeapon2 = pWeapon;
+	else
+		m_hActiveWeapon = pWeapon;
+
+	return pWeapon->Deploy();
+}
+
+CBaseCombatWeapon *CBaseCombatCharacter::GetActiveWeapon() const
+{
+	return m_hActiveWeapon ? m_hActiveWeapon.Get() : m_hActiveWeapon2.Get();
+}
+
+CBaseCombatWeapon *CBaseCombatCharacter::GetActiveWeapon1() const
+{
+	return m_hActiveWeapon.Get();
+}
+
+CBaseCombatWeapon *CBaseCombatCharacter::GetActiveWeapon2() const
+{
+	return m_hActiveWeapon2.Get();
+}
+
+void CBaseCombatCharacter::SetActiveWeapon1( CBaseCombatWeapon *pNewWeapon )
+{
+#ifdef CLIENT_DLL
+	m_hActiveWeapon = pNewWeapon;
+#else
+	SetActiveWeapon( pNewWeapon );
+#endif
+}
+
+void CBaseCombatCharacter::SetActiveWeapon2( CBaseCombatWeapon *pNewWeapon )
+{
+#ifdef CLIENT_DLL
+	m_hActiveWeapon2 = pNewWeapon;
+#else
+	CBaseCombatWeapon *pOldWeapon = m_hActiveWeapon2.Get();
+	if ( pOldWeapon != pNewWeapon )
+	{
+		m_hActiveWeapon2 = pNewWeapon;
+		OnChangeActiveWeapon( pOldWeapon, pNewWeapon );
+	}
+#endif
+}
+
+bool CBaseCombatCharacter::HasDualActiveWeapons() const
+{
+	// FoF tests only whether both active-weapon handles resolve.  Weapon
+	// type and hand validation belongs to the selection/equip path; repeating
+	// it here changes holster, sight, animation and input dispatch after the
+	// two handles have already become authoritative.
+	return m_hActiveWeapon.Get() != NULL && m_hActiveWeapon2.Get() != NULL;
+}
 
 
 //-----------------------------------------------------------------------------
@@ -28,40 +144,6 @@ bool CBaseCombatCharacter::SwitchToNextBestWeapon(CBaseCombatWeapon *pCurrent)
 	}
 
 	return false;
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: Switches to the given weapon (providing it has ammo)
-// Input  :
-// Output : true is switch succeeded
-//-----------------------------------------------------------------------------
-bool CBaseCombatCharacter::Weapon_Switch( CBaseCombatWeapon *pWeapon, int viewmodelindex /*=0*/ ) 
-{
-	if ( pWeapon == NULL )
-		return false;
-
-	// Already have it out?
-	if ( m_hActiveWeapon.Get() == pWeapon )
-	{
-		if ( !m_hActiveWeapon->IsWeaponVisible() || m_hActiveWeapon->IsHolstered() )
-			return m_hActiveWeapon->Deploy( );
-		return false;
-	}
-
-	if (!Weapon_CanSwitchTo(pWeapon))
-	{
-		return false;
-	}
-
-	if ( m_hActiveWeapon )
-	{
-		if ( !m_hActiveWeapon->Holster( pWeapon ) )
-			return false;
-	}
-
-	m_hActiveWeapon = pWeapon;
-
-	return pWeapon->Deploy( );
 }
 
 //-----------------------------------------------------------------------------
@@ -110,15 +192,6 @@ bool CBaseCombatCharacter::Weapon_CanSwitchTo( CBaseCombatWeapon *pWeapon )
 	}
 
 	return true;
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: 
-// Output : CBaseCombatWeapon
-//-----------------------------------------------------------------------------
-CBaseCombatWeapon *CBaseCombatCharacter::GetActiveWeapon() const
-{
-	return m_hActiveWeapon;
 }
 
 //-----------------------------------------------------------------------------

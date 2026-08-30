@@ -34,6 +34,7 @@ extern IVModelInfo* modelinfo;
 #endif
 
 #include "weapon_hl2mpbase.h"
+#include "fof/fof_weapon_activities.h"
 
 
 // ----------------------------------------------------------------------------- //
@@ -84,7 +85,6 @@ LINK_ENTITY_TO_CLASS( weapon_hl2mp_base, CWeaponHL2MPBase );
 #ifdef GAME_DLL
 
 	BEGIN_DATADESC( CWeaponHL2MPBase )
-
 	END_DATADESC()
 
 #endif
@@ -100,6 +100,10 @@ CWeaponHL2MPBase::CWeaponHL2MPBase()
 	m_flNextResetCheckTime = 0.0f;
 }
 
+const CHL2MPSWeaponInfo &CWeaponHL2MPBase::GetHL2MPWpnData() const
+{
+	return static_cast< const CHL2MPSWeaponInfo & >( GetWpnData() );
+}
 
 bool CWeaponHL2MPBase::IsPredicted() const
 { 
@@ -146,7 +150,6 @@ void CWeaponHL2MPBase::OnDataChanged( DataUpdateType_t type )
 		ShutdownPredictable();
 }
 
-
 bool CWeaponHL2MPBase::ShouldPredict()
 {
 	if ( GetOwner() && GetOwner() == C_BasePlayer::GetLocalPlayer() )
@@ -154,7 +157,6 @@ bool CWeaponHL2MPBase::ShouldPredict()
 
 	return BaseClass::ShouldPredict();
 }
-
 
 #else
 	
@@ -212,82 +214,22 @@ void CWeaponHL2MPBase::FallInit( void )
 	SetModel( GetWorldModel() );
 	VPhysicsDestroyObject();
 
-	if ( HasSpawnFlags( SF_NORESPAWN ) == false )
+	if ( !VPhysicsInitNormal( SOLID_BBOX, GetSolidFlags(), false ) )
 	{
-		SetMoveType( MOVETYPE_NONE );
+		SetMoveType( MOVETYPE_FLYGRAVITY );
 		SetSolid( SOLID_BBOX );
-		AddSolidFlags( FSOLID_TRIGGER );
-
-		UTIL_DropToFloor( this, MASK_SOLID );
-	}
-	else
-	{
-		if ( !VPhysicsInitNormal( SOLID_BBOX, GetSolidFlags() | FSOLID_TRIGGER, false ) )
-		{
-			SetMoveType( MOVETYPE_NONE );
-			SetSolid( SOLID_BBOX );
-			AddSolidFlags( FSOLID_TRIGGER );
-		}
-		else
-		{
-	#if !defined( CLIENT_DLL )
-			// Constrained start?
-			if ( HasSpawnFlags( SF_WEAPON_START_CONSTRAINED ) )
-			{
-				//Constrain the weapon in place
-				IPhysicsObject *pReferenceObject, *pAttachedObject;
-				
-				pReferenceObject = g_PhysWorldObject;
-				pAttachedObject = VPhysicsGetObject();
-
-				if ( pReferenceObject && pAttachedObject )
-				{
-					constraint_fixedparams_t fixed;
-					fixed.Defaults();
-					fixed.InitWithCurrentObjectState( pReferenceObject, pAttachedObject );
-					
-					fixed.constraint.forceLimit	= lbs2kg( 10000 );
-					fixed.constraint.torqueLimit = lbs2kg( 10000 );
-
-					IPhysicsConstraint *pConstraint = GetConstraint();
-
-					pConstraint = physenv->CreateFixedConstraint( pReferenceObject, pAttachedObject, NULL, fixed );
-
-					pConstraint->SetGameData( (void *) this );
-				}
-			}
-	#endif //CLIENT_DLL
-		}
 	}
 
 	SetPickupTouch();
-	
-	SetThink( &CBaseCombatWeapon::FallThink );
-
-	SetNextThink( gpGlobals->curtime + 0.1f );
-
 #endif
 }
 
-const CHL2MPSWeaponInfo &CWeaponHL2MPBase::GetHL2MPWpnData() const
-{
-	const FileWeaponInfo_t *pWeaponInfo = &GetWpnData();
-	const CHL2MPSWeaponInfo *pHL2MPInfo;
-
-	#ifdef _DEBUG
-		pHL2MPInfo = dynamic_cast< const CHL2MPSWeaponInfo* >( pWeaponInfo );
-		Assert( pHL2MPInfo );
-	#else
-		pHL2MPInfo = static_cast< const CHL2MPSWeaponInfo* >( pWeaponInfo );
-	#endif
-
-	return *pHL2MPInfo;
-}
 void CWeaponHL2MPBase::FireBullets( const FireBulletsInfo_t &info )
 {
 	FireBulletsInfo_t modinfo = info;
 
-	modinfo.m_iPlayerDamage = GetHL2MPWpnData().m_iPlayerDamage;
+	modinfo.m_iPlayerDamage =
+		GetHL2MPWpnData().m_iPlayerDamage;
 
 	BaseClass::FireBullets( modinfo );
 }
@@ -327,4 +269,3 @@ void UTIL_ClipPunchAngleOffset( QAngle &in, const QAngle &punch, const QAngle &c
 }
 
 #endif
-

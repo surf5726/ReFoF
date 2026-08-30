@@ -39,6 +39,9 @@ class CMissile : public CBaseCombatCharacter
 public:
 	CMissile();
 	~CMissile();
+#if defined( GAME_DLL )
+	virtual void NetworkStateChanged_m_iAmmo( void ) {}
+#endif
 
 #ifdef HL1_DLL
 	Class_T Classify( void ) { return CLASS_NONE; }

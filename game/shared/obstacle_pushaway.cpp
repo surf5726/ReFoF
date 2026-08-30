@@ -8,23 +8,23 @@
 #include "obstacle_pushaway.h"
 #include "props_shared.h"
 
-#if defined( CSTRIKE_DLL )
+#if defined( CSTRIKE_DLL ) || defined( HL2MP )
 #define SV_PUSH_CONVAR_FLAGS  (FCVAR_REPLICATED)
 #else
 #define SV_PUSH_CONVAR_FLAGS  (FCVAR_REPLICATED | FCVAR_DEVELOPMENTONLY)
-#endif // CSTRIKE_DLL
+#endif // CSTRIKE_DLL || HL2MP
 
 //-----------------------------------------------------------------------------------------------------
-ConVar sv_pushaway_force( "sv_pushaway_force", "30000", SV_PUSH_CONVAR_FLAGS, "How hard physics objects are pushed away from the players on the server." );
+ConVar sv_pushaway_force( "sv_pushaway_force", "40000", SV_PUSH_CONVAR_FLAGS, "How hard physics objects are pushed away from the players on the server." );
 ConVar sv_pushaway_min_player_speed( "sv_pushaway_min_player_speed", "75", SV_PUSH_CONVAR_FLAGS, "If a player is moving slower than this, don't push away physics objects (enables ducking behind things)." );
 ConVar sv_pushaway_max_force( "sv_pushaway_max_force", "1000", SV_PUSH_CONVAR_FLAGS, "Maximum amount of force applied to physics objects by players." );
-ConVar sv_pushaway_clientside( "sv_pushaway_clientside", "0", SV_PUSH_CONVAR_FLAGS, "Clientside physics push away (0=off, 1=only localplayer, 1=all players)" );
+ConVar sv_pushaway_clientside( "sv_pushaway_clientside", "1", SV_PUSH_CONVAR_FLAGS, "Clientside physics push away (0=off, 1=only localplayer, 1=all players)" );
 
 ConVar sv_pushaway_player_force( "sv_pushaway_player_force", "200000", SV_PUSH_CONVAR_FLAGS | FCVAR_CHEAT, "How hard the player is pushed away from physics objects (falls off with inverse square of distance)." );
 ConVar sv_pushaway_max_player_force( "sv_pushaway_max_player_force", "10000", SV_PUSH_CONVAR_FLAGS | FCVAR_CHEAT, "Maximum of how hard the player is pushed away from physics objects." );
 
 #ifdef CLIENT_DLL
-ConVar sv_turbophysics( "sv_turbophysics", "0", FCVAR_REPLICATED, "Turns on turbo physics" );
+ConVar sv_turbophysics( "sv_turbophysics", "1", FCVAR_REPLICATED, "Turns on turbo physics" );
 #else
 extern ConVar sv_turbophysics;
 #endif
@@ -213,10 +213,7 @@ void AvoidPushawayProps( CBaseCombatCharacter *pPlayer, CUserCmd *pCmd )
 
 	for ( int i=0; i < nEnts; i++ )
 	{
-		// Don't respond to this entity on the client unless it has PHYSICS_MULTIPLAYER_FULL set.
 		IMultiplayerPhysics *pInterface = dynamic_cast<IMultiplayerPhysics*>( props[i] );
-		if ( pInterface && pInterface->GetMultiplayerPhysicsMode() != PHYSICS_MULTIPLAYER_SOLID )
-			continue;
 
 		const float minMass = 10.0f; // minimum mass that can push a player back
 		const float maxMass = 30.0f; // cap at a decently large value

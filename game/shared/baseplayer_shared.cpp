@@ -47,6 +47,9 @@
 #include "SoundEmitterSystem/isoundemittersystembase.h"
 #include "decals.h"
 #include "obstacle_pushaway.h"
+#include "fof/fof_player_shared.h"
+#include "fof/fof_player_weapons.h"
+#include "fof/fof_weapon_properties.h"
 #ifdef SIXENSE
 #include "sixense/in_sixense.h"
 #endif
@@ -55,6 +58,174 @@
 #include "haptics/haptic_utils.h"
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
+
+static bool FoFWeaponCanRunPredictedFrame( CBaseCombatWeapon *pWeapon )
+{
+#ifdef CLIENT_DLL
+	return pWeapon && pWeapon->IsPredicted();
+#else
+	return pWeapon != NULL;
+#endif
+}
+
+void CBasePlayer::ItemPreFrame()
+{
+	PlayerUse();
+
+	CBaseCombatWeapon *pActive = GetActiveWeapon();
+	if ( FoFWeaponCanRunPredictedFrame( pActive ) )
+	{
+		pActive->ItemPreFrame();
+		pActive = GetActiveWeapon();
+		for ( int i = 0; i < WeaponCount(); ++i )
+		{
+			CBaseCombatWeapon *pWeapon = GetWeapon( i );
+			if ( pWeapon && pWeapon != pActive &&
+				!pWeapon->IsSecondGun() )
+			{
+				pWeapon->ItemHolsterFrame();
+			}
+		}
+	}
+
+	CBaseCombatWeapon *pActive2 = GetActiveWeapon2();
+	if ( FoFWeaponCanRunPredictedFrame( pActive2 ) )
+	{
+		pActive2->ItemPreFrame();
+		pActive2 = GetActiveWeapon2();
+		for ( int i = 0; i < WeaponCount(); ++i )
+		{
+			CBaseCombatWeapon *pWeapon = GetWeapon( i );
+			if ( pWeapon && pWeapon != pActive2 &&
+				pWeapon->IsSecondGun() )
+			{
+				pWeapon->ItemHolsterFrame();
+			}
+		}
+	}
+}
+
+void CBasePlayer::ItemPostFrame()
+{
+	VPROF( "CBasePlayer::ItemPostFrame" );
+	CalcViewModelView( EyePosition(), EyeAngles() );
+
+	if ( GetVehicle() )
+	{
+#ifdef CLIENT_DLL
+		IClientVehicle *pVehicle = GetVehicle();
+		const bool bUsingStandardWeapons = UsingStandardWeaponsInVehicle();
+		if ( pVehicle->IsPredicted() )
+			pVehicle->ItemPostFrame( this );
+#else
+		IServerVehicle *pVehicle = GetVehicle();
+		const bool bUsingStandardWeapons = UsingStandardWeaponsInVehicle();
+		pVehicle->ItemPostFrame( this );
+#endif
+		if ( !bUsingStandardWeapons || !GetVehicle() )
+			return;
+	}
+
+	if ( m_hUseEntity != NULL )
+		return;
+
+	if ( gpGlobals->curtime < m_flNextAttack )
+	{
+		if ( GetActiveWeapon() )
+			GetActiveWeapon()->ItemBusyFrame();
+		if ( GetActiveWeapon2() )
+			GetActiveWeapon2()->ItemBusyFrame();
+	}
+	else
+	{
+		if ( FoFWeaponCanRunPredictedFrame( GetActiveWeapon() ) &&
+			( !IsInAVehicle() || UsingStandardWeaponsInVehicle() ) )
+		{
+			GetActiveWeapon()->ItemPostFrame();
+		}
+
+		if ( FoFWeaponCanRunPredictedFrame( GetActiveWeapon2() ) &&
+			( !IsInAVehicle() || UsingStandardWeaponsInVehicle() ) )
+		{
+			GetActiveWeapon2()->ItemPostFrame();
+		}
+	}
+
+#ifndef CLIENT_DLL
+	ImpulseCommands();
+#else
+	m_nImpulse = 0;
+#endif
+}
+
+bool CBasePlayer::Weapon_Switch(
+	CBaseCombatWeapon *pWeapon, int viewmodelindex )
+{
+	CBaseCombatWeapon *pLastWeapon = GetActiveWeapon();
+	CBaseCombatWeapon *pLastWeapon2 = GetActiveWeapon2();
+	if ( CBaseCombatCharacter::Weapon_Switch( pWeapon, viewmodelindex ) )
+	{
+		if ( pLastWeapon )
+			Weapon_SetLast( pLastWeapon->GetLastWeapon() );
+		if ( pLastWeapon2 )
+		{
+#ifdef CLIENT_DLL
+			m_hLastWeapon2 = pLastWeapon2->GetLastWeapon();
+#else
+			Weapon_SetLast2( pLastWeapon2->GetLastWeapon() );
+#endif
+		}
+
+		ResetAutoaim();
+		return true;
+	}
+	return false;
+}
+
+bool CBasePlayer::Weapon_ShouldSelectItem( CBaseCombatWeapon *pWeapon )
+{
+	return pWeapon != GetActiveWeapon1() && pWeapon != GetActiveWeapon2();
+}
+
+void CBasePlayer::SelectItem( const char *pstr, int iSubType )
+{
+	if ( !pstr )
+		return;
+
+	CBaseCombatWeapon *pItem = Weapon_OwnsThisType( pstr, iSubType );
+	if ( !pItem || FoFPotionLocksCurrentWeapons( this ) )
+		return;
+
+	if ( HasDualActiveWeapons() && pItem->CanDualWield() &&
+		( pItem == GetActiveWeapon1() || pItem == GetActiveWeapon2() ) )
+	{
+		const bool bWasFirst = pItem == GetActiveWeapon1();
+		const bool bWasSecond = pItem == GetActiveWeapon2();
+		pItem->Holster( NULL );
+		if ( bWasFirst )
+			SetActiveWeapon1( NULL );
+		if ( bWasSecond )
+			SetActiveWeapon2( NULL );
+		return;
+	}
+
+	if ( GetObserverMode() != OBS_MODE_NONE ||
+		!Weapon_ShouldSelectItem( pItem ) )
+	{
+		return;
+	}
+
+	CBaseCombatWeapon *pActiveHand = pItem->IsSecondGun() ?
+		GetActiveWeapon2() : GetActiveWeapon1();
+	if ( pActiveHand )
+	{
+		if ( !pActiveHand->CanHolster() )
+			return;
+		ResetAutoaim();
+	}
+
+	Weapon_Switch( pItem, pItem->IsSecondGun() ? 1 : 0 );
+}
 
 #if defined(GAME_DLL) && !defined(_XBOX)
 	extern ConVar sv_pushaway_max_force;
@@ -156,45 +327,6 @@ float CBasePlayer::GetPlayerMaxSpeed()
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: Called every usercmd by the player PreThink
-//-----------------------------------------------------------------------------
-void CBasePlayer::ItemPreFrame()
-{
-	// Handle use events
-	PlayerUse();
-
-	CBaseCombatWeapon *pActive = GetActiveWeapon();
-
-	// Allow all the holstered weapons to update
-	for ( int i = 0; i < WeaponCount(); ++i )
-	{
-		CBaseCombatWeapon *pWeapon = GetWeapon( i );
-
-		if ( pWeapon == NULL )
-			continue;
-
-		if ( pActive == pWeapon )
-			continue;
-
-		pWeapon->ItemHolsterFrame();
-	}
-
-    if ( gpGlobals->curtime < m_flNextAttack )
-		return;
-
-	if (!pActive)
-		return;
-
-#if defined( CLIENT_DLL )
-	// Not predicting this weapon
-	if ( !pActive->IsPredicted() )
-		return;
-#endif
-
-	pActive->ItemPreFrame();
-}
-
-//-----------------------------------------------------------------------------
 // Purpose: 
 // Output : Returns true on success, false on failure.
 //-----------------------------------------------------------------------------
@@ -221,81 +353,6 @@ bool CBasePlayer::UsingStandardWeaponsInVehicle( void )
 
 	return true;
 }
-
-//-----------------------------------------------------------------------------
-// Purpose: Called every usercmd by the player PostThink
-//-----------------------------------------------------------------------------
-void CBasePlayer::ItemPostFrame()
-{
-	VPROF( "CBasePlayer::ItemPostFrame" );
-
-	// Put viewmodels into basically correct place based on new player origin
-	CalcViewModelView( EyePosition(), EyeAngles() );
-
-	// Don't process items while in a vehicle.
-	if ( GetVehicle() )
-	{
-#if defined( CLIENT_DLL )
-		IClientVehicle *pVehicle = GetVehicle();
-#else
-		IServerVehicle *pVehicle = GetVehicle();
-#endif
-
-		bool bUsingStandardWeapons = UsingStandardWeaponsInVehicle();
-
-#if defined( CLIENT_DLL )
-		if ( pVehicle->IsPredicted() )
-#endif
-		{
-			pVehicle->ItemPostFrame( this );
-		}
-
-		if (!bUsingStandardWeapons || !GetVehicle())
-			return;
-	}
-
-
-	// check if the player is using something
-	if ( m_hUseEntity != NULL )
-	{
-#if !defined( CLIENT_DLL )
-		Assert( !IsInAVehicle() );
-		ImpulseCommands();// this will call playerUse
-#endif
-		return;
-	}
-
-    if ( gpGlobals->curtime < m_flNextAttack )
-	{
-		if ( GetActiveWeapon() )
-		{
-			GetActiveWeapon()->ItemBusyFrame();
-		}
-	}
-	else
-	{
-		if ( GetActiveWeapon() && (!IsInAVehicle() || UsingStandardWeaponsInVehicle()) )
-		{
-#if defined( CLIENT_DLL )
-			// Not predicting this weapon
-			if ( GetActiveWeapon()->IsPredicted() )
-#endif
-
-			{
-				GetActiveWeapon()->ItemPostFrame( );
-			}
-		}
-	}
-
-#if !defined( CLIENT_DLL )
-	ImpulseCommands();
-#else
-	// NOTE: If we ever support full impulse commands on the client,
-	// remove this line and call ImpulseCommands instead.
-	m_nImpulse = 0;
-#endif
-}
-
 
 //-----------------------------------------------------------------------------
 // Eye angles
@@ -834,32 +891,6 @@ void CBasePlayer::Weapon_SetLast( CBaseCombatWeapon *pWeapon )
 	m_hLastWeapon = pWeapon;
 }
 
-//-----------------------------------------------------------------------------
-// Purpose: Override base class so player can reset autoaim
-// Input  :
-// Output :
-//-----------------------------------------------------------------------------
-bool CBasePlayer::Weapon_Switch( CBaseCombatWeapon *pWeapon, int viewmodelindex /*=0*/ ) 
-{
-	CBaseCombatWeapon *pLastWeapon = GetActiveWeapon();
-
-	if ( BaseClass::Weapon_Switch( pWeapon, viewmodelindex ))
-	{
-		if ( pLastWeapon && Weapon_ShouldSetLast( pLastWeapon, GetActiveWeapon() ) )
-		{
-			Weapon_SetLast( pLastWeapon->GetLastWeapon() );
-		}
-
-		CBaseViewModel *pViewModel = GetViewModel( viewmodelindex );
-		Assert( pViewModel );
-		if ( pViewModel )
-			pViewModel->RemoveEffects( EF_NODRAW );
-		ResetAutoaim( );
-		return true;
-	}
-	return false;
-}
-
 void CBasePlayer::SelectLastItem(void)
 {
 	if ( m_hLastWeapon.Get() == NULL )
@@ -1003,46 +1034,6 @@ void CBasePlayer::ClearPlayerSimulationList( void )
 	m_SimulatedByThisPlayer.RemoveAll();
 }
 #endif
-
-//-----------------------------------------------------------------------------
-// Purpose: Return true if we should allow selection of the specified item
-//-----------------------------------------------------------------------------
-bool CBasePlayer::Weapon_ShouldSelectItem( CBaseCombatWeapon *pWeapon )
-{
-	return ( pWeapon != GetActiveWeapon() );
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: 
-//-----------------------------------------------------------------------------
-void CBasePlayer::SelectItem( const char *pstr, int iSubType )
-{
-	if (!pstr)
-		return;
-
-	CBaseCombatWeapon *pItem = Weapon_OwnsThisType( pstr, iSubType );
-
-	if (!pItem)
-		return;
-
-	if( GetObserverMode() != OBS_MODE_NONE )
-		return;// Observers can't select things.
-
-	if ( !Weapon_ShouldSelectItem( pItem ) )
-		return;
-
-	// FIX, this needs to queue them up and delay
-	// Make sure the current weapon can be holstered
-	if ( GetActiveWeapon() )
-	{
-		if ( !GetActiveWeapon()->CanHolster() && !pItem->ForceWeaponSwitch() )
-			return;
-
-		ResetAutoaim( );
-	}
-
-	Weapon_Switch( pItem );
-}
 
 //-----------------------------------------------------------------------------
 // Purpose: 
@@ -2082,4 +2073,3 @@ bool fogparams_t::operator !=( const fogparams_t& other ) const
 
 	return false;
 }
-

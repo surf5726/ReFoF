@@ -39,6 +39,7 @@
 #include "beam_shared.h"
 #include "Sprite.h"
 #include "weapon_physcannon.h"
+#include "hl2mp/grabcontroller.h"
 #include "physics_saverestore.h"
 #include "movevars_shared.h"
 #include "weapon_hl2mpbasehlmpcombatweapon.h"
@@ -257,12 +258,6 @@ static void ComputePlayerMatrix( CBasePlayer *pPlayer, matrix3x4_t &out )
 // Purpose: 
 //-----------------------------------------------------------------------------
 
-// derive from this so we can add save/load data to it
-struct game_shadowcontrol_params_t : public hlshadowcontrol_params_t
-{
-	DECLARE_SIMPLE_DATADESC();
-};
-
 BEGIN_SIMPLE_DATADESC( game_shadowcontrol_params_t )
 	
 	DEFINE_FIELD( targetPosition,		FIELD_POSITION_VECTOR ),
@@ -276,78 +271,35 @@ BEGIN_SIMPLE_DATADESC( game_shadowcontrol_params_t )
 
 END_DATADESC()
 
-//-----------------------------------------------------------------------------
-class CGrabController : public IMotionEvent
-{
-public:
-
-	CGrabController( void );
-	~CGrabController( void );
-	void AttachEntity( CBasePlayer *pPlayer, CBaseEntity *pEntity, IPhysicsObject *pPhys, bool bIsMegaPhysCannon, const Vector &vGrabPosition, bool bUseGrabPosition );
-	void DetachEntity( bool bClearVelocity );
-	void OnRestore();
-
-	bool UpdateObject( CBasePlayer *pPlayer, float flError );
-
-	void SetTargetPosition( const Vector &target, const QAngle &targetOrientation );
-	float ComputeError();
-	float GetLoadWeight( void ) const { return m_flLoadWeight; }
-	void SetAngleAlignment( float alignAngleCosine ) { m_angleAlignment = alignAngleCosine; }
-	void SetIgnorePitch( bool bIgnore ) { m_bIgnoreRelativePitch = bIgnore; }
-	QAngle TransformAnglesToPlayerSpace( const QAngle &anglesIn, CBasePlayer *pPlayer );
-	QAngle TransformAnglesFromPlayerSpace( const QAngle &anglesIn, CBasePlayer *pPlayer );
-
-	CBaseEntity *GetAttached() { return (CBaseEntity *)m_attachedEntity; }
-
-	IMotionEvent::simresult_e Simulate( IPhysicsMotionController *pController, IPhysicsObject *pObject, float deltaTime, Vector &linear, AngularImpulse &angular );
-	float GetSavedMass( IPhysicsObject *pObject );
-
-	QAngle			m_attachedAnglesPlayerSpace;
-	Vector			m_attachedPositionObjectSpace;
-
-private:
-	// Compute the max speed for an attached object
-	void ComputeMaxSpeed( CBaseEntity *pEntity, IPhysicsObject *pPhysics );
-
-	game_shadowcontrol_params_t	m_shadow;
-	float			m_timeToArrive;
-	float			m_errorTime;
-	float			m_error;
-	float			m_contactAmount;
-	float			m_angleAlignment;
-	bool			m_bCarriedEntityBlocksLOS;
-	bool			m_bIgnoreRelativePitch;
-
-	float			m_flLoadWeight;
-	float			m_savedRotDamping[VPHYSICS_MAX_OBJECT_LIST_COUNT];
-	float			m_savedMass[VPHYSICS_MAX_OBJECT_LIST_COUNT];
-	EHANDLE			m_attachedEntity;
-	QAngle			m_vecPreferredCarryAngles;
-	bool			m_bHasPreferredCarryAngles;
-
-
-	IPhysicsMotionController *m_controller;
-	int				m_frameCount;
-	friend class CWeaponPhysCannon;
-};
-
 const float DEFAULT_MAX_ANGULAR = 360.0f * 10.0f;
 const float REDUCED_CARRY_MASS = 1.0f;
 
 CGrabController::CGrabController( void )
 {
+	m_timeToArrive = 0.0f;
 	m_shadow.dampFactor = 1.0;
 	m_shadow.teleportDistance = 0;
 	m_errorTime = 0;
 	m_error = 0;
+	m_contactAmount = 0.0f;
+	m_angleAlignment = 0.0f;
+	m_bCarriedEntityBlocksLOS = false;
+	m_bIgnoreRelativePitch = false;
+	m_flLoadWeight = 0.0f;
+	Q_memset( m_savedRotDamping, 0, sizeof( m_savedRotDamping ) );
+	Q_memset( m_savedMass, 0, sizeof( m_savedMass ) );
 	// make this controller really stiff!
 	m_shadow.maxSpeed = 1000;
 	m_shadow.maxAngular = DEFAULT_MAX_ANGULAR;
 	m_shadow.maxDampSpeed = m_shadow.maxSpeed*2;
 	m_shadow.maxDampAngular = m_shadow.maxAngular;
 	m_attachedEntity = NULL;
+	m_attachedAnglesPlayerSpace.Init();
+	m_attachedPositionObjectSpace.Init();
 	m_vecPreferredCarryAngles = vec3_angle;
 	m_bHasPreferredCarryAngles = false;
+	m_controller = NULL;
+	m_frameCount = -1;
 }
 
 CGrabController::~CGrabController( void )
@@ -503,11 +455,6 @@ QAngle CGrabController::TransformAnglesFromPlayerSpace( const QAngle &anglesIn, 
 
 void CGrabController::AttachEntity( CBasePlayer *pPlayer, CBaseEntity *pEntity, IPhysicsObject *pPhys, bool bIsMegaPhysCannon, const Vector &vGrabPosition, bool bUseGrabPosition )
 {
-	// play the impact sound of the object hitting the player
-	// used as feedback to let the player know he picked up the object
-#ifndef CLIENT_DLL
-	PhysicsImpactSound( pPlayer, pPhys, CHAN_STATIC, pPhys->GetMaterialIndex(), pPlayer->VPhysicsGetObject()->GetMaterialIndex(), 1.0, 64 );
-#endif
 	Vector position;
 	QAngle angles;
 	pPhys->GetPosition( &position, &angles );
@@ -1287,7 +1234,9 @@ END_PREDICTION_DATA()
 #endif
 
 LINK_ENTITY_TO_CLASS( weapon_physcannon, CWeaponPhysCannon );
+#if !defined( GAME_DLL )
 PRECACHE_WEAPON_REGISTER( weapon_physcannon );
+#endif
 
 #ifndef CLIENT_DLL
 
@@ -2266,9 +2215,12 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
 
 	float radius = playerRadius + fabs( flDot );
 
-	float distance = 24 + ( radius * 2.0f );
+	// FoF keeps carried props closer than HL2MP so releasing one restores
+	// collision without first resolving it upward around nearby geometry.
+	float distance = ( radius * 2.0f ) - 24.0f;
 
 	Vector start = pPlayer->Weapon_ShootPosition();
+	start.z -= 16.0f;
 	Vector end = start + ( forward * distance );
 
 	trace_t	tr;

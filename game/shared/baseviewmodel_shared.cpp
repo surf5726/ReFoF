@@ -13,6 +13,7 @@
 #include "prediction.h"
 #include "client_virtualreality.h"
 #include "sourcevr/isourcevirtualreality.h"
+#include "fof/fof_viewmodel.h"
 #else
 #include "vguiscreen.h"
 #endif
@@ -33,8 +34,158 @@ extern ConVar in_forceuser;
 #define VIEWMODEL_ANIMATION_PARITY_BITS 3
 #define SCREEN_OVERLAY_MATERIAL "vgui/screens/vgui_overlay"
 
+#if defined( CLIENT_DLL )
+bool CBaseViewModel::Interpolate( float flCurrentTime )
+{
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	UpdateAnimationParity();
+
+	bool bret = BaseClass::Interpolate( flCurrentTime );
+
+	float elapsed_time = flCurrentTime - m_flAnimTime;
+	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+
+	float flFoFPresentationTime = flCurrentTime;
+	if ( GetPredictable() || IsClientCreated() )
+	{
+		flFoFPresentationTime = pPlayer ?
+			pPlayer->GetFinalPredictedTime() : gpGlobals->curtime;
+		if ( !engine->IsPaused() )
+		{
+			flFoFPresentationTime +=
+				gpGlobals->interpolation_amount * TICK_INTERVAL;
+		}
+	}
+
+	bool bFoFSequencePresentation = false;
+	if ( fof_viewmodel_protected_sequences.GetBool() &&
+		m_bFoFSequencePresentationActive )
+	{
+		const bool bWeaponMatches =
+			m_hFoFSequencePresentationWeapon.Get() == GetWeapon();
+		const int nPresentedSequence = m_nFoFSequencePresentation;
+		float flPresentedCycle = 1.0f;
+		if ( bWeaponMatches && pStudioHdr && nPresentedSequence >= 0 &&
+			nPresentedSequence < pStudioHdr->GetNumSeq() )
+		{
+			const float flElapsed = MAX(
+				0.0f,
+				flFoFPresentationTime - m_flFoFSequencePresentationStart );
+			flPresentedCycle = flElapsed *
+				GetSequenceCycleRate( pStudioHdr, nPresentedSequence ) *
+				GetPlaybackRate();
+			const bool bPresentedSequenceLoops =
+				IsSequenceLooping( nPresentedSequence );
+			bFoFSequencePresentation =
+				bPresentedSequenceLoops || flPresentedCycle < 1.0f;
+
+			if ( bFoFSequencePresentation &&
+				GetSequence() != nPresentedSequence )
+			{
+				SetSequence( nPresentedSequence );
+				ResetSequenceInfo();
+			}
+		}
+
+		if ( !bFoFSequencePresentation )
+			ClearFoFSequencePresentation();
+	}
+	else if ( m_bFoFSequencePresentationActive )
+	{
+		ClearFoFSequencePresentation();
+	}
+
+	if ( bFoFSequencePresentation )
+	{
+		elapsed_time =
+			flFoFPresentationTime - m_flFoFSequencePresentationStart;
+	}
+	else if ( GetPredictable() || IsClientCreated() )
+	{
+		Assert( pPlayer );
+		const float curtime = pPlayer ?
+			pPlayer->GetFinalPredictedTime() : gpGlobals->curtime;
+		elapsed_time = curtime - m_flAnimTime;
+		if ( !engine->IsPaused() )
+		{
+			elapsed_time +=
+				gpGlobals->interpolation_amount * TICK_INTERVAL;
+		}
+	}
+
+	if ( elapsed_time < 0.0f )
+		elapsed_time = 0.0f;
+
+	float dt = elapsed_time *
+		GetSequenceCycleRate( pStudioHdr, GetSequence() ) *
+		GetPlaybackRate();
+	if ( dt >= 1.0f )
+	{
+		if ( !IsSequenceLooping( GetSequence() ) )
+			dt = 0.999f;
+		else
+			dt = fmod( dt, 1.0f );
+	}
+
+	SetCycle( dt );
+	return bret;
+}
+
+void CBaseViewModel::UpdateFoFSequencePresentation( int nSequence )
+{
+	const bool bFirstPresentationExecution =
+		!prediction->InPrediction() || prediction->IsFirstTimePredicted();
+	if ( !fof_viewmodel_protected_sequences.GetBool() ||
+		!GetPredictable() || !bFirstPresentationExecution )
+	{
+		return;
+	}
+
+	if ( IsSequenceLooping( nSequence ) )
+		ClearFoFSequencePresentation();
+	else
+		RestartFoFSequencePresentation( nSequence );
+}
+
+void CBaseViewModel::RestartFoFSequencePresentation( int nSequence )
+{
+	if ( nSequence < 0 )
+	{
+		ClearFoFSequencePresentation();
+		return;
+	}
+
+	if ( m_bFoFSequencePresentationActive &&
+		m_nFoFSequencePresentation == nSequence &&
+		m_hFoFSequencePresentationWeapon.Get() == GetWeapon() &&
+		fabsf( m_flFoFSequencePresentationStart - gpGlobals->curtime ) <
+			0.0001f )
+	{
+		return;
+	}
+
+	m_bFoFSequencePresentationActive = true;
+	m_nFoFSequencePresentation = nSequence;
+	m_flFoFSequencePresentationStart = gpGlobals->curtime;
+	m_hFoFSequencePresentationWeapon = GetWeapon();
+	++m_nFoFSequencePresentationRestartSerial;
+
+	SetSequence( nSequence );
+	SetCycle( 0.0f );
+	ResetSequenceInfo();
+}
+
+void CBaseViewModel::ClearFoFSequencePresentation()
+{
+	m_bFoFSequencePresentationActive = false;
+	m_nFoFSequencePresentation = -1;
+	m_flFoFSequencePresentationStart = 0.0f;
+	m_hFoFSequencePresentationWeapon = NULL;
+}
+#endif
+
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 CBaseViewModel::CBaseViewModel()
 {
@@ -42,6 +193,13 @@ CBaseViewModel::CBaseViewModel()
 	// NOTE: We do this here because the color is never transmitted for the view model.
 	m_nOldAnimationParity = 0;
 	m_EntClientFlags |= ENTCLIENTFLAG_ALWAYS_INTERPOLATE;
+	m_bFoFSequencePresentationActive = false;
+	m_nFoFSequencePresentation = -1;
+	m_flFoFSequencePresentationStart = 0.0f;
+	m_hFoFSequencePresentationWeapon = NULL;
+	m_nFoFSequencePresentationRestartSerial = 0;
+	m_nFoFLastLagUpdateFrame = -1;
+	m_vecFoFViewModelLagDifference.Init();
 #endif
 	SetRenderColor( 255, 255, 255, 255 );
 
@@ -356,7 +514,7 @@ CBaseCombatWeapon *CBaseViewModel::GetOwningWeapon( void )
 //-----------------------------------------------------------------------------
 void CBaseViewModel::SendViewModelMatchingSequence( int sequence )
 {
-	// since all we do is send a sequence number down to the client, 
+	// since all we do is send a sequence number down to the client,
 	// set this here so other weapons code knows which sequence is playing.
 	SetSequence( sequence );
 
@@ -376,6 +534,10 @@ void CBaseViewModel::SendViewModelMatchingSequence( int sequence )
 	// Restart animation at frame 0
 	SetCycle( 0 );
 	ResetSequenceInfo();
+
+#if defined( CLIENT_DLL )
+	UpdateFoFSequencePresentation( sequence );
+#endif
 }
 
 #if defined( CLIENT_DLL )
@@ -417,8 +579,13 @@ void CBaseViewModel::CalcViewModelView( CBasePlayer *owner, const Vector& eyePos
 	if ( !prediction->InPrediction() )
 	{
 		// Let the viewmodel shake at about 10% of the amplitude of the player's view
-		vieweffects->ApplyShake( vmorigin, vmangles, 0.1 );	
+		vieweffects->ApplyShake( vmorigin, vmangles, 0.1 );
 	}
+#endif
+
+#if defined( CLIENT_DLL )
+	FoFApplyViewModelTransform(
+		this, owner, pWeapon, eyePosition, vmorigin, vmangles );
 #endif
 
 	if( UseVR() )
@@ -466,6 +633,70 @@ float g_fMaxViewModelLag = 1.5f;
 
 void CBaseViewModel::CalcViewModelLag( Vector& origin, QAngle& angles, QAngle& original_angles )
 {
+#if defined( CLIENT_DLL )
+	const Vector vecOriginalOrigin = origin;
+	const QAngle angOriginal = angles;
+
+	Vector forward;
+	AngleVectors( angles, &forward, NULL, NULL );
+
+	if ( gpGlobals->frametime != 0.0f )
+	{
+		if ( m_nFoFLastLagUpdateFrame != gpGlobals->framecount )
+		{
+			m_nFoFLastLagUpdateFrame = gpGlobals->framecount;
+			VectorSubtract(
+				forward, m_vecLastFacing,
+				m_vecFoFViewModelLagDifference );
+
+			float flSpeed = 5.0f;
+			const float flDifference =
+				m_vecFoFViewModelLagDifference.Length();
+			if ( flDifference > g_fMaxViewModelLag &&
+				g_fMaxViewModelLag > 0.0f )
+			{
+				flSpeed *= flDifference / g_fMaxViewModelLag;
+			}
+
+			VectorMA(
+				m_vecLastFacing,
+				flSpeed * gpGlobals->frametime,
+				m_vecFoFViewModelLagDifference,
+				m_vecLastFacing );
+			VectorNormalize( m_vecLastFacing );
+		}
+
+		VectorMA(
+			origin, 5.0f,
+			m_vecFoFViewModelLagDifference * -1.0f,
+			origin );
+		Assert( m_vecLastFacing.IsValid() );
+	}
+	else if ( m_nFoFLastLagUpdateFrame != gpGlobals->framecount )
+	{
+		m_nFoFLastLagUpdateFrame = gpGlobals->framecount;
+		m_vecFoFViewModelLagDifference.Init();
+	}
+
+	Vector right, up;
+	AngleVectors( original_angles, &forward, &right, &up );
+
+	float flPitch = original_angles[PITCH];
+	if ( flPitch > 180.0f )
+		flPitch -= 360.0f;
+	else if ( flPitch < -180.0f )
+		flPitch += 360.0f;
+
+	if ( g_fMaxViewModelLag == 0.0f )
+	{
+		origin = vecOriginalOrigin;
+		angles = angOriginal;
+	}
+
+	VectorMA( origin, -flPitch * 0.035f, forward, origin );
+	VectorMA( origin, -flPitch * 0.03f, right, origin );
+	VectorMA( origin, -flPitch * 0.02f, up, origin );
+#else
 	Vector vOriginalOrigin = origin;
 	QAngle vOriginalAngles = angles;
 
@@ -477,21 +708,15 @@ void CBaseViewModel::CalcViewModelLag( Vector& origin, QAngle& angles, QAngle& o
 	{
 		Vector vDifference;
 		VectorSubtract( forward, m_vecLastFacing, vDifference );
-
 		float flSpeed = 5.0f;
-
-		// If we start to lag too far behind, we'll increase the "catch up" speed.  Solves the problem with fast cl_yawspeed, m_yaw or joysticks
-		//  rotating quickly.  The old code would slam lastfacing with origin causing the viewmodel to pop to a new position
 		float flDiff = vDifference.Length();
 		if ( (flDiff > g_fMaxViewModelLag) && (g_fMaxViewModelLag > 0.0f) )
 		{
 			float flScale = flDiff / g_fMaxViewModelLag;
 			flSpeed *= flScale;
 		}
-
-		// FIXME:  Needs to be predictable?
-		VectorMA( m_vecLastFacing, flSpeed * gpGlobals->frametime, vDifference, m_vecLastFacing );
-		// Make sure it doesn't grow out of control!!!
+		VectorMA( m_vecLastFacing, flSpeed * gpGlobals->frametime,
+			vDifference, m_vecLastFacing );
 		VectorNormalize( m_vecLastFacing );
 		VectorMA( origin, 5.0f, vDifference * -1.0f, origin );
 
@@ -517,6 +742,7 @@ void CBaseViewModel::CalcViewModelLag( Vector& origin, QAngle& angles, QAngle& o
 	VectorMA( origin, -pitch * 0.035f,	forward,	origin );
 	VectorMA( origin, -pitch * 0.03f,		right,	origin );
 	VectorMA( origin, -pitch * 0.02f,		up,		origin);
+#endif
 }
 
 //-----------------------------------------------------------------------------

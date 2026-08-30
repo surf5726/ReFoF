@@ -42,6 +42,10 @@
 #include "gamestats.h"
 #include "vehicle_base.h"
 
+#include "fof/fof_physics_entities.h"
+#include "fof/fof_course_mode.h"
+#include "fof/fof_player.h"
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -77,7 +81,7 @@ ConVar func_breakdmg_bullet( "func_breakdmg_bullet", "0.5" );
 ConVar func_breakdmg_club( "func_breakdmg_club", "1.5" );
 ConVar func_breakdmg_explosive( "func_breakdmg_explosive", "1.25" );
 
-ConVar sv_turbophysics( "sv_turbophysics", "0", FCVAR_REPLICATED, "Turns on turbo physics" );
+extern ConVar sv_turbophysics;
 
 #ifdef HL2_EPISODIC
 	#define PROP_FLARE_LIFETIME 30.0f
@@ -433,9 +437,6 @@ void CBreakableProp::ClearEnableMotionPosition()
 void CBreakableProp::Ignite( float flFlameLifetime, bool bNPCOnly, float flSize, bool bCalledByLevelDesigner )
 {
 	if( IsOnFire() )
-		return;
-
-	if( !HasInteraction( PROPINTER_FIRE_FLAMMABLE ) )
 		return;
 
 	BaseClass::Ignite( flFlameLifetime, bNPCOnly, flSize, bCalledByLevelDesigner );
@@ -1054,6 +1055,13 @@ int CBreakableProp::OnTakeDamage( const CTakeDamageInfo &inputInfo )
 	float flPropDamage = GetBreakableDamage( info, assert_cast<IBreakableWithPropData*>(this) );
 	info.SetDamage( flPropDamage );
 
+	CFoF_Player *pPhysicsAttacker = ToFoFPlayer( m_hPhysicsAttacker.Get() );
+	if ( pPhysicsAttacker &&
+		( pPhysicsAttacker->m_nPlayerInfo & 0x800000 ) )
+	{
+		info.ScaleDamage( 0.25f );
+	}
+
 	// UNDONE: Do this?
 #if 0
 	// Make a shard noise each time func breakable is hit.
@@ -1075,13 +1083,6 @@ int CBreakableProp::OnTakeDamage( const CTakeDamageInfo &inputInfo )
 		m_takedamage = saveFlags;
 
 		return ret;
-	}
-
-	// Ignore fire damage from other flames if I'm already on fire.
-	// (i.e., only let the flames attached to me damage me)
-	if( IsOnFire() && (inputInfo.GetDamageType() & DMG_BURN) && !(inputInfo.GetDamageType() & DMG_DIRECT) )
-	{
-		return 0;
 	}
 
 	bool bDeadly = info.GetDamage() >= m_iHealth;
@@ -1600,6 +1601,76 @@ IPhysicsObject *CBreakableProp::GetRootPhysicsObjectForBreak()
 void CBreakableProp::Break( CBaseEntity *pBreaker, const CTakeDamageInfo &info )
 {
 	const char *pModelName = STRING( GetModelName() );
+	const int nDamageType = info.GetDamageType();
+	const bool bFoFGasBreak = m_bUsePuntSound &&
+		( m_explodeDamage > 0.0f || m_explodeRadius > 0.0f ) &&
+		( nDamageType &
+			( DMG_BULLET | DMG_SLASH | DMG_BURN | DMG_BLAST |
+			  DMG_BUCKSHOT ) ) == 0;
+	if ( bFoFGasBreak )
+	{
+		RemoveInteraction( PROPINTER_PHYSGUN_BREAK_EXPLODE );
+
+		const char *pszCloud = m_explodeDamage > 100.0f ?
+			"barrel_cloud_big" : "barrel_cloud";
+		CBaseEntity *pCloud = CreateEntityByName( "info_particle_system" );
+		if ( pCloud )
+		{
+			pCloud->KeyValue( "start_active", "1" );
+			pCloud->KeyValue( "effect_name", pszCloud );
+			pCloud->SetAbsOrigin( GetAbsOrigin() );
+			DispatchSpawn( pCloud );
+			pCloud->Activate();
+			pCloud->SetThink( &CBaseEntity::SUB_Remove );
+			pCloud->SetNextThink( gpGlobals->curtime + 5.0f );
+		}
+
+		trace_t trace;
+		UTIL_TraceLine(
+			GetAbsOrigin(), GetAbsOrigin() - Vector( 0, 0, 100 ),
+			MASK_SOLID_BRUSHONLY, this, COLLISION_GROUP_NONE, &trace );
+		if ( trace.fraction < 1.0f )
+		{
+			UTIL_DecalTrace(
+				&trace, m_explodeDamage > 100.0f ?
+					"decal_splatter_yellow" :
+					"decal_splatter_yellow_small" );
+		}
+
+		m_explodeDamage = 0.0f;
+		m_explodeRadius = 0.0f;
+	}
+
+	CBaseEntity *pCourseActor = pBreaker;
+	if ( pCourseActor && !pCourseActor->IsPlayer() )
+		pCourseActor = pCourseActor->GetOwnerEntity();
+	CFoF_Player *pCoursePlayer = ToFoFPlayer( pCourseActor );
+	if ( pCoursePlayer )
+	{
+		const char *pszCourseStat = "break_phys";
+		if ( pModelName &&
+			( !Q_stricmp( pModelName, "models/props/native_silhouette1.mdl" ) ||
+			  !Q_stricmp( pModelName, "models/props/native_silhouette2.mdl" ) ) )
+		{
+			pszCourseStat = "break_sil";
+		}
+		else if ( pModelName &&
+			( !Q_stricmp( pModelName, "models/bar/bottle5.mdl" ) ||
+			  !Q_stricmp( pModelName, "models/bar/bottle6.mdl" ) ) )
+		{
+			pszCourseStat = "break_bottle";
+		}
+		else if ( info.GetDamageType() == DMG_DIRECT )
+		{
+			if ( gpGlobals->curtime - pCoursePlayer->GetFoFLastWallJumpTime() < 1.0f )
+				pszCourseStat = "break_phys_kick+wj";
+			else if ( pCoursePlayer->GetGroundEntity() == NULL )
+				pszCourseStat = "break_phys_kick+j";
+			else
+				pszCourseStat = "break_phys_kick";
+		}
+		FoFReportCourseStat( pszCourseStat, pCoursePlayer );
+	}
 	if ( pModelName && Q_stristr( pModelName, "crate" ) )
 	{
 		bool bSmashed = false;
@@ -1810,8 +1881,6 @@ void CBreakableProp::Break( CBaseEntity *pBreaker, const CTakeDamageInfo &info )
 LINK_ENTITY_TO_CLASS( dynamic_prop, CDynamicProp );
 LINK_ENTITY_TO_CLASS( prop_dynamic, CDynamicProp );	
 LINK_ENTITY_TO_CLASS( prop_dynamic_override, CDynamicProp );	
-
-IMPLEMENT_AUTO_LIST( IPhysicsPropAutoList );
 
 BEGIN_DATADESC( CDynamicProp )
 
@@ -5554,24 +5623,14 @@ class CPhysicsPropMultiplayer : public CPhysicsProp, public IMultiplayerPhysics
 			if ( IsDebris() )
 				return;
 
-			if ( m_bAwake )
-			{
-				SetCollisionGroup( COLLISION_GROUP_PUSHAWAY );
-			}
-			else if ( m_iPhysicsMode == PHYSICS_MULTIPLAYER_NON_SOLID )
-			{
-				SetCollisionGroup( COLLISION_GROUP_DEBRIS );
-			}
-			else
-			{
-				SetCollisionGroup( COLLISION_GROUP_NONE );
-			}
+			FoFUpdatePhysicsPropMultiplayer( this, pPhysics );
 		}
 	}
 
 	virtual void Spawn( void )
 	{
 		BaseClass::Spawn();
+		FoFPreparePhysicsPropMultiplayerSpawn( this );
 
 		// if no physicsmode was defined by .QC or propdata.txt, 
 		// use auto detect based on size & mass
@@ -5592,7 +5651,8 @@ class CPhysicsPropMultiplayer : public CPhysicsProp, public IMultiplayerPhysics
 		// check if map maker overrides physics mode to force a server-side entity
 		if ( GetSpawnFlags() & SF_PHYSPROP_FORCE_SERVER_SIDE )
 		{
-			SetPhysicsMode( PHYSICS_MULTIPLAYER_NON_SOLID );
+			FoFSetPhysicsPropMultiplayerCallbackFlags(
+				this, CALLBACK_GLOBAL_COLLISION );
 		}
 
 		if ( m_iPhysicsMode == PHYSICS_MULTIPLAYER_CLIENTSIDE )
@@ -5600,7 +5660,8 @@ class CPhysicsPropMultiplayer : public CPhysicsProp, public IMultiplayerPhysics
 			if ( engine->IsInEditMode() )
 			{
 				// in map edit mode always spawn as server phys prop
-				SetPhysicsMode( PHYSICS_MULTIPLAYER_NON_SOLID );
+				FoFSetPhysicsPropMultiplayerCallbackFlags(
+					this, CALLBACK_GLOBAL_FRICTION );
 			}
 			else
 			{
@@ -5611,8 +5672,7 @@ class CPhysicsPropMultiplayer : public CPhysicsProp, public IMultiplayerPhysics
 			
 		}
 
-		if ( GetCollisionGroup() == COLLISION_GROUP_NONE )
-			SetCollisionGroup( COLLISION_GROUP_PUSHAWAY );
+		FoFConfigurePhysicsPropMultiplayerCollision( this );
 
 		// Items marked as debris should be set as such.
 		if ( IsDebris() )
@@ -5676,9 +5736,9 @@ END_SEND_TABLE()
 
 #define RESPAWNABLE_PROP_DEFAULT_TIME 60.0f
 
-class CPhysicsPropRespawnable : public CPhysicsProp
+class CPhysicsPropRespawnable : public CPhysicsPropMultiplayer
 {
-	DECLARE_CLASS( CPhysicsPropRespawnable, CPhysicsProp );
+	DECLARE_CLASS( CPhysicsPropRespawnable, CPhysicsPropMultiplayer );
 	DECLARE_DATADESC();
 
 public:

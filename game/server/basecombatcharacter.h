@@ -80,7 +80,6 @@ enum Capability_t
 
 
 class CBaseCombatWeapon;
-
 #define BCC_DEFAULT_LOOK_TOWARDS_TOLERANCE 0.9f
 
 enum Disposition_t 
@@ -345,6 +344,11 @@ public:
 
 	// Weapons..
 	CBaseCombatWeapon*	GetActiveWeapon() const;
+	CBaseCombatWeapon*	GetActiveWeapon1() const;
+	CBaseCombatWeapon*	GetActiveWeapon2() const;
+	void				SetActiveWeapon1( CBaseCombatWeapon *pNewWeapon );
+	void				SetActiveWeapon2( CBaseCombatWeapon *pNewWeapon );
+	bool				HasDualActiveWeapons() const;
 	int					WeaponCount() const;
 	CBaseCombatWeapon*	GetWeapon( int i ) const;
 	bool				RemoveWeapon( CBaseCombatWeapon *pWeapon );
@@ -392,6 +396,9 @@ public:
 
 	float				GetNextAttack() const { return m_flNextAttack; }
 	void				SetNextAttack( float flWait ) { m_flNextAttack = flWait; }
+
+	// FoF keeps a second active-weapon handle for the off hand.
+	CNetworkHandle( CBaseCombatWeapon, m_hActiveWeapon2 );
 
 	bool				m_bForceServerRagdoll;
 
@@ -510,7 +517,12 @@ private:
 
 protected:
 	// shared ammo slots
-	CNetworkArrayForDerived( int, m_iAmmo, MAX_AMMO_SLOTS );
+	// FoF's CBaseCombatCharacter introduces only the pointer-taking
+	// callback. Classes that expose the array add the no-argument overload as
+	// their first new virtual slot instead of extending the whole NPC hierarchy.
+	virtual void NetworkStateChanged_m_iAmmo( void *pVar );
+	CNetworkArrayInternal( int, m_iAmmo, MAX_AMMO_SLOTS,
+		NetworkStateChanged_m_iAmmo );
 
 	// Usable character items 
 	CNetworkArray( CBaseCombatWeaponHandle, m_hMyWeapons, MAX_WEAPONS );

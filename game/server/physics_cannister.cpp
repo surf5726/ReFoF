@@ -146,6 +146,12 @@ CPhysicsCannister::~CPhysicsCannister( void )
 {
 }
 
+#if defined( HL2MP )
+void CPhysicsCannister::NetworkStateChanged_m_iAmmo( void )
+{
+}
+#endif
+
 void CPhysicsCannister::Precache( void )
 {
 	PropBreakablePrecacheAll( GetModelName() );

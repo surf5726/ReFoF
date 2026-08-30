@@ -20,6 +20,7 @@
 #include "con_nprint.h"
 #include "hud_pdump.h"
 #include "datacache/imdlcache.h"
+#include "fof/fof_player_weapons.h"
 
 #ifdef HL2_CLIENT_DLL
 #include "c_basehlplayer.h"
@@ -854,7 +855,8 @@ void CPrediction::RunCommand( C_BasePlayer *player, CUserCmd *ucmd, IMoveHelper 
 		C_BaseCombatWeapon *weapon = dynamic_cast< C_BaseCombatWeapon * >( CBaseEntity::Instance( ucmd->weaponselect ) );
 		if ( weapon )
 		{
-			player->SelectItem( weapon->GetName(), ucmd->weaponsubtype );
+			if ( !FoFSelectExactWeapon( player, weapon ) )
+				player->SelectItem( weapon->GetName(), ucmd->weaponsubtype );
 		}
 	}
 
@@ -874,8 +876,7 @@ void CPrediction::RunCommand( C_BasePlayer *player, CUserCmd *ucmd, IMoveHelper 
 	// Get button states
 	player->UpdateButtonState( ucmd->buttons );
 
-// TODO
-//	CheckMovingGround( player, ucmd->frametime );
+	CheckMovingGround( player, TICK_INTERVAL );
 
 // TODO
 //	g_pMoveData->m_vecOldAngles = player->pl.v_angle;

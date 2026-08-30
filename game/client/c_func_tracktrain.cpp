@@ -6,7 +6,7 @@
 //=============================================================================//
 
 #include "cbase.h"
-#include "c_baseentity.h"
+#include "c_basetoggle.h"
 #include "soundinfo.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -15,10 +15,10 @@
 //-----------------------------------------------------------------------------
 // An entity which emits other entities at points 
 //-----------------------------------------------------------------------------
-class C_FuncTrackTrain : public C_BaseEntity
+class C_FuncTrackTrain : public C_BaseToggle
 {
 public:
-	DECLARE_CLASS( C_FuncTrackTrain, C_BaseEntity );
+	DECLARE_CLASS( C_FuncTrackTrain, C_BaseToggle );
 	DECLARE_CLIENTCLASS();
 
 public:
@@ -118,5 +118,3 @@ bool C_FuncTrackTrain::GetSoundSpatialization( SpatializationInfo_t& info )
 
 	return true;
 }
-
-

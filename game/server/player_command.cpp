@@ -14,6 +14,9 @@
 #include "movehelper_server.h"
 #include "iservervehicle.h"
 #include "tier0/vprof.h"
+#if defined( HL2MP )
+#include "fof/fof_player_weapons.h"
+#endif
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -382,6 +385,11 @@ void CPlayerMove::RunCommand ( CBasePlayer *player, CUserCmd *ucmd, IMoveHelper 
 		if ( weapon )
 		{
 			VPROF( "player->SelectItem()" );
+#if defined( HL2MP )
+			const bool bFoFExactSelection =
+				FoFSelectExactWeapon( player, weapon );
+			if ( !bFoFExactSelection )
+#endif
 			player->SelectItem( weapon->GetName(), ucmd->weaponsubtype );
 		}
 	}

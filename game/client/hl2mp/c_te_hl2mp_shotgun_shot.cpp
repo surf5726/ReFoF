@@ -9,7 +9,7 @@
 #include <cliententitylist.h>
 #include "ammodef.h"
 #include "c_te_effect_dispatch.h"
-#include "shot_manipulator.h"
+#include "fof/fof_weapon_ballistics.h"
 
 class C_TEHL2MPFireBullets : public C_BaseTempEntity
 {
@@ -32,6 +32,7 @@ public:
 	int		m_iShots;
 	bool	m_bDoImpacts;
 	bool	m_bDoTracers;
+	bool	m_bPrimary;
 };
 
 class CTraceFilterSkipPlayerAndViewModelOnly : public CTraceFilter
@@ -66,22 +67,25 @@ void C_TEHL2MPFireBullets::CreateEffects( void )
 	{
 		C_BasePlayer *pPlayer = dynamic_cast<C_BasePlayer *>(pEnt);
 
-		if ( pPlayer && pPlayer->GetActiveWeapon() )
+		if ( pPlayer )
 		{
-			C_BaseCombatWeapon *pWpn = dynamic_cast<C_BaseCombatWeapon *>( pPlayer->GetActiveWeapon() );
+			C_BaseCombatWeapon *pWpn = m_bPrimary ?
+				pPlayer->GetActiveWeapon1() : pPlayer->GetActiveWeapon2();
 
 			if ( pWpn )
 			{
-				int iSeed = m_iSeed;
-					
-				CShotManipulator Manipulator( m_vecDir );
-
+				FireBulletsInfo_t visualInfo(
+					m_iShots,
+					m_vecOrigin,
+					m_vecDir,
+					Vector( m_flSpread, m_flSpread, m_flSpread ),
+					MAX_TRACE_LENGTH,
+					m_iAmmoID,
+					m_bPrimary );
 				for (int iShot = 0; iShot < m_iShots; iShot++)
 				{
-					RandomSeed( iSeed );	// init random system with this seed
-
-					// Don't run the biasing code for the player at the moment.
-					Vector vecDir = Manipulator.ApplySpread( Vector( m_flSpread, m_flSpread, m_flSpread ) );
+					Vector vecDir = FoFComputeBulletDirection(
+						visualInfo, iShot, m_iSeed, false );
 					Vector vecEnd = m_vecOrigin + vecDir * MAX_TRACE_LENGTH;
 					trace_t tr;
 					CTraceFilterSkipPlayerAndViewModelOnly traceFilter;
@@ -105,7 +109,7 @@ void C_TEHL2MPFireBullets::CreateEffects( void )
 						data.m_vOrigin = tr.endpos;
 						data.m_hEntity = pWpn->GetRefEHandle();
 						data.m_flScale = 0.0f;
-						data.m_fFlags |= TRACER_FLAG_USEATTACHMENT;
+						data.m_fFlags |= TRACER_FLAG_WHIZ | TRACER_FLAG_USEATTACHMENT;
 						// Stomp the start, since it's not going to be used anyway
 						data.m_nAttachmentIndex = 1;
 
@@ -123,8 +127,6 @@ void C_TEHL2MPFireBullets::CreateEffects( void )
 					{
 						pWpn->DoImpactEffect( tr, pAmmoDef->DamageType( m_iAmmoID ) );
 					}
-
-					iSeed++;
 				}
 			}
 		}
@@ -155,6 +157,5 @@ BEGIN_RECV_TABLE_NOBASE(C_TEHL2MPFireBullets, DT_TEHL2MPFireBullets )
 	RecvPropFloat( RECVINFO( m_flSpread ) ),
 	RecvPropBool( RECVINFO( m_bDoImpacts ) ),
 	RecvPropBool( RECVINFO( m_bDoTracers ) ),
+	RecvPropBool( RECVINFO( m_bPrimary ) ),
 END_RECV_TABLE()
-
-

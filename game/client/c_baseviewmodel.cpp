@@ -7,6 +7,7 @@
 //=============================================================================//
 #include "cbase.h"
 #include "c_baseviewmodel.h"
+#include "fof/fof_viewmodel.h"
 #include "model_types.h"
 #include "hud.h"
 #include "view_shared.h"
@@ -146,57 +147,11 @@ void C_BaseViewModel::FireEvent( const Vector& origin, const QAngle& angles, int
 	}
 }
 
-bool C_BaseViewModel::Interpolate( float currentTime )
-{
-	CStudioHdr *pStudioHdr = GetModelPtr();
-	// Make sure we reset our animation information if we've switch sequences
-	UpdateAnimationParity();
-
-	bool bret = BaseClass::Interpolate( currentTime );
-
-	// Hack to extrapolate cycle counter for view model
-	float elapsed_time = currentTime - m_flAnimTime;
-	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
-
-	// Predicted viewmodels have fixed up interval
-	if ( GetPredictable() || IsClientCreated() )
-	{
-		Assert( pPlayer );
-		float curtime = pPlayer ? pPlayer->GetFinalPredictedTime() : gpGlobals->curtime;
-		elapsed_time = curtime - m_flAnimTime;
-		// Adjust for interpolated partial frame
-		if ( !engine->IsPaused() )
-		{
-			elapsed_time += ( gpGlobals->interpolation_amount * TICK_INTERVAL );
-		}
-	}
-
-	// Prediction errors?	
-	if ( elapsed_time < 0 )
-	{
-		elapsed_time = 0;
-	}
-
-	float dt = elapsed_time * GetSequenceCycleRate( pStudioHdr, GetSequence() ) * GetPlaybackRate();
-	if ( dt >= 1.0f )
-	{
-		if ( !IsSequenceLooping( GetSequence() ) )
-		{
-			dt = 0.999f;
-		}
-		else
-		{
-			dt = fmod( dt, 1.0f );
-		}
-	}
-
-	SetCycle( dt );
-	return bret;
-}
-
-
 bool C_BaseViewModel::ShouldFlipViewModel()
 {
+	if ( FoFShouldFlipViewModel( this ) )
+		return true;
+
 #ifdef CSTRIKE_DLL
 	// If cl_righthand is set, then we want them all right-handed.
 	CBaseCombatWeapon *pWeapon = m_hWeapon.Get();
@@ -259,6 +214,9 @@ void C_BaseViewModel::ApplyBoneMatrixTransform( matrix3x4_t& transform )
 //-----------------------------------------------------------------------------
 bool C_BaseViewModel::ShouldDraw()
 {
+	if ( !FoFShouldDrawViewModel( this ) )
+		return false;
+
 	if ( engine->IsHLTV() )
 	{
 		return ( HLTVCamera()->GetMode() == OBS_MODE_IN_EYE &&
@@ -283,6 +241,12 @@ bool C_BaseViewModel::ShouldDraw()
 //-----------------------------------------------------------------------------
 int C_BaseViewModel::DrawModel( int flags )
 {
+	// DrawViewModels consumes a cached leaf-system list and does not re-enter
+	// ShouldDraw.  This check is therefore the authoritative last line of
+	// defense against an old acquisition/switch snapshot being rendered.
+	if ( !FoFShouldDrawViewModel( this ) )
+		return 0;
+
 	if ( !m_bReadyToDraw )
 		return 0;
 

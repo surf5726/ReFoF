@@ -284,6 +284,8 @@ public:
 	virtual bool  FlPlayerFallDeathDoesScreenFade( CBasePlayer *pl ) { return TRUE; }
 
 	virtual bool AllowDamage( CBaseEntity *pVictim, const CTakeDamageInfo &info ) = 0;
+	// FoF adds this server-side hook between AllowDamage and PlayerSpawn.
+	virtual bool FoFAllowEntitySpawn( const char *pszClassname );
 
 
 // Client spawn/respawn control

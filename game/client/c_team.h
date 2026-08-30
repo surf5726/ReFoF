@@ -33,6 +33,7 @@ public:
 	// Data Handling
 	virtual char	*Get_Name( void );
 	virtual int		Get_Score( void );
+	virtual int		GetRoundsWon( void ) { return m_iRoundsWon; }
 	virtual int		Get_Deaths( void );
 	virtual int		Get_Ping( void );
 
@@ -44,9 +45,7 @@ public:
 	// for shared code, use the same function name
 	virtual int		GetNumPlayers( void ) { return Get_Number_Players(); }
 
-	int		GetTeamNumber() const;
-
-	int		GetRoundsWon(void) { return m_iRoundsWon; }
+	virtual int	GetTeamNumber() const;
 
 	void	RemoveAllPlayers();
 

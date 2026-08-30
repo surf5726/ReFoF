@@ -37,6 +37,7 @@
 #include "props.h"
 #include "rumble_shared.h"
 #include "particle_parse.h"
+#include "recipientfilter.h"
 // NVNT turret recoil
 #include "haptics/haptic_utils.h"
 
@@ -77,14 +78,14 @@ BEGIN_DATADESC( CFuncTank )
 	DEFINE_KEYFIELD( m_iBulletDamageVsPlayer, FIELD_INTEGER, "bullet_damage_vs_player" ),
 	DEFINE_KEYFIELD( m_iszMaster, FIELD_STRING, "master" ),
 	
-#ifdef HL2_EPISODIC	
+#if defined( HL2_EPISODIC ) || defined( HL2MP )
 	DEFINE_KEYFIELD( m_iszAmmoType, FIELD_STRING, "ammotype" ),
 	DEFINE_FIELD( m_iAmmoType, FIELD_INTEGER ),
 #else
 	DEFINE_FIELD( m_iSmallAmmoType, FIELD_INTEGER ),
 	DEFINE_FIELD( m_iMediumAmmoType, FIELD_INTEGER ),
 	DEFINE_FIELD( m_iLargeAmmoType, FIELD_INTEGER ),
-#endif // HL2_EPISODIC
+#endif
 
 	DEFINE_KEYFIELD( m_soundStartRotate, FIELD_SOUNDNAME, "rotatestartsound" ),
 	DEFINE_KEYFIELD( m_soundStopRotate, FIELD_SOUNDNAME, "rotatestopsound" ),
@@ -733,15 +734,17 @@ static Vector gTankSpread[] =
 //-----------------------------------------------------------------------------
 void CFuncTank::Spawn( void )
 {
+	m_iszSpriteFlash = AllocPooledString( "sprites/cannon_muzzle.vmt" );
+	m_spriteScale = 1.0f;
 	Precache();
 
-#ifdef HL2_EPISODIC
+#if defined( HL2_EPISODIC ) || defined( HL2MP )
 	m_iAmmoType = GetAmmoDef()->Index( STRING( m_iszAmmoType ) );
 #else
 	m_iSmallAmmoType	= GetAmmoDef()->Index("Pistol");
 	m_iMediumAmmoType	= GetAmmoDef()->Index("SMG1");
 	m_iLargeAmmoType	= GetAmmoDef()->Index("AR2");
-#endif // HL2_EPISODIC
+#endif
 
 	SetMoveType( MOVETYPE_PUSH );  // so it doesn't get pushed by anything
 	SetSolid( SOLID_VPHYSICS );
@@ -758,6 +761,7 @@ void CFuncTank::Spawn( void )
 	if ( GetParent() && GetParent()->GetBaseAnimating() )
 	{
 		CBaseAnimating *pAnim = GetParent()->GetBaseAnimating();
+		pAnim->UseServerSideAnimation();
 		if ( m_iszBaseAttachment != NULL_STRING )
 		{
 			int nAttachment = pAnim->LookupAttachment( STRING( m_iszBaseAttachment ) );
@@ -841,6 +845,7 @@ void CFuncTank::Spawn( void )
 	{
 		m_takedamage = DAMAGE_YES;
 	}
+	m_takedamage = DAMAGE_NO;
 
 	// UNDONE: Do this?
 	//m_targetEntityName = m_target;
@@ -902,7 +907,12 @@ void CFuncTank::Precache( void )
 		PrecacheScriptSound( STRING(m_soundLoopRotate) );
 
 	PrecacheScriptSound( "Func_Tank.BeginUse" );
-	
+
+#if defined( HL2MP )
+	PrecacheScriptSound( "Weapon_functank.Single" );
+	PrecacheParticleSystem( "gatling_smoke" );
+#endif
+
 	// Precache the combine cannon
 	if ( m_iEffectHandling == EH_COMBINE_CANNON )
 	{
@@ -960,8 +970,15 @@ void CFuncTank::PhysicsSimulate( void )
 	{
 		const QAngle &angles = GetLocalAngles();
 		CBaseAnimating *pAnim = GetParent()->GetBaseAnimating();
+#if defined( HL2MP )
+		pAnim->SetPoseParameter(
+			STRING( m_iszYawPoseParam ), angles.x * -3.0f );
+		pAnim->SetPoseParameter(
+			STRING( m_iszPitchPoseParam ), angles.y );
+#else
 		pAnim->SetPoseParameter( STRING( m_iszYawPoseParam ), angles.y );
 		pAnim->SetPoseParameter( STRING( m_iszPitchPoseParam ), angles.x );
+#endif
 		pAnim->StudioFrameAdvance();
 	}
 }
@@ -1025,6 +1042,7 @@ bool CFuncTank::StartControl( CBaseCombatCharacter *pController )
 
 		CBasePlayer *pPlayer = static_cast<CBasePlayer*>( m_hController.Get() );
 		pPlayer->m_Local.m_iHideHUD |= HIDEHUD_WEAPONSELECTION;
+		pPlayer->SetNextAttack( gpGlobals->curtime + 1.0f );
 	}
 	else
 	{
@@ -1170,6 +1188,23 @@ void CFuncTank::ControllerPostFrame( void )
 		}
 	}
 	
+#if defined( HL2MP )
+	CBaseEntity *pSmoke = CreateEntityByName( "info_particle_system" );
+	if ( pSmoke )
+	{
+		pSmoke->KeyValue( "start_active", "1" );
+		pSmoke->KeyValue( "effect_name", "gatling_smoke" );
+		pSmoke->SetAbsOrigin( WorldBarrelPosition() );
+		QAngle smokeAngles;
+		VectorAngles( forward, smokeAngles );
+		pSmoke->SetAbsAngles( smokeAngles );
+		DispatchSpawn( pSmoke );
+		pSmoke->Activate();
+		pSmoke->SetThink( &CBaseEntity::SUB_Remove );
+		pSmoke->SetNextThink( gpGlobals->curtime + 5.0f );
+	}
+#endif
+
 	Fire( bulletCount, WorldBarrelPosition(), forward, pPlayer, false );
  
 #if defined( WIN32 ) && !defined( _X360 ) 
@@ -1456,6 +1491,19 @@ void CFuncTank::Use( CBaseEntity *pActivator, CBaseEntity *pCaller, USE_TYPE use
 	}
 	else if ( m_hController != pPlayer && useType != USE_OFF )
 	{
+		CBaseCombatWeapon *pActiveWeapon = pPlayer->GetActiveWeapon();
+		if ( !pActiveWeapon ||
+			!FClassnameIs( pActiveWeapon, "weapon_fists" ) )
+		{
+			CSingleUserRecipientFilter filter( pPlayer );
+			filter.MakeReliable();
+			UserMessageBegin( filter, "BBNotices" );
+				WRITE_BYTE( 1 );
+				WRITE_STRING( "#Gatling_Help" );
+			MessageEnd();
+			return;
+		}
+
 		// The player must be within the func_tank controls
 		if ( !m_hControlVolume )
 		{
@@ -1717,9 +1765,11 @@ void CFuncTank::CalcPlayerCrosshairTarget( Vector *pVecTarget )
 //-----------------------------------------------------------------------------
 void CFuncTank::AimBarrelAtPlayerCrosshair( QAngle *pAngles )
 {
-	Vector vecTarget;
-	CalcPlayerCrosshairTarget( &vecTarget );
-	*pAngles = AimBarrelAt( m_parentMatrix.WorldToLocal( vecTarget ) );
+	CBasePlayer *pPlayer = static_cast<CBasePlayer*>( m_hController.Get() );
+	Vector vecForward = pPlayer->EyeDirection3D();
+	Vector vecLocalForward;
+	VectorIRotate( vecForward, EntityToWorldTransform(), vecLocalForward );
+	VectorAngles( vecLocalForward, *pAngles );
 }
 
 
@@ -2085,8 +2135,22 @@ void CFuncTank::TrackTarget( void )
 	if ( IsPlayerManned() )
 	{
 		AimBarrelAtPlayerCrosshair( &angles );
+
+		CBaseEntity *pMoveParent = GetMoveParent();
+		if ( pMoveParent &&
+			pMoveParent->GetLocalAngularVelocity() != vec3_angle )
+		{
+			angles = TransformAnglesToWorldSpace(
+				angles, pMoveParent->EntityToWorldTransform() );
+		}
+
 		RotateTankToAngles( angles );
+#if defined( HL2MP )
+		// Pose-driven FoF cannons expose the 20 Hz aim-rate steps visually.
+		SetNextThink( gpGlobals->curtime );
+#else
 		SetNextThink( gpGlobals->curtime + 0.05f );
+#endif
 		SetMoveDoneTime( 0.1 );
 		return;
 	}
@@ -2194,6 +2258,39 @@ const char *CFuncTank::GetTracerType( void )
 	return NULL;
 }
 
+void CFuncTank::MakeTracer(
+	const Vector &vecTracerSrc, const trace_t &tr, int iTracerType )
+{
+	CEffectData data;
+	data.m_vStart = vecTracerSrc;
+	data.m_vOrigin = tr.endpos;
+	data.m_nEntIndex = entindex();
+	data.m_flScale = 0.0f;
+
+	if ( iTracerType == TRACER_LINE_AND_WHIZ )
+		data.m_fFlags |= TRACER_FLAG_WHIZ;
+	else if ( iTracerType != TRACER_LINE )
+		return;
+
+	const int nAttachment = GetTracerAttachment();
+	if ( nAttachment != TRACER_DONT_USE_ATTACHMENT )
+	{
+		data.m_fFlags |= TRACER_FLAG_USEATTACHMENT;
+		data.m_nAttachmentIndex = nAttachment;
+	}
+
+	CPASFilter filter( data.m_vOrigin );
+	CBasePlayer *pController = ToBasePlayer( m_hController.Get() );
+	if ( pController )
+		filter.AddRecipient( pController );
+	// A mounted weapon is server-driven, so its local controller does not
+	// reconstruct the tracer through ordinary weapon prediction.
+	filter.SetIgnorePredictionCull( true );
+
+	const char *pszTracerName = GetTracerType();
+	DispatchEffect( pszTracerName ? pszTracerName : "Tracer", data, filter );
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: Fire targets and spawn sprites.
 // Input  : bulletCount - 
@@ -2203,6 +2300,42 @@ const char *CFuncTank::GetTracerType( void )
 //-----------------------------------------------------------------------------
 void CFuncTank::Fire( int bulletCount, const Vector &barrelEnd, const Vector &forward, CBaseEntity *pAttacker, bool bIgnoreSpread )
 {
+#if defined( HL2MP )
+	if ( m_iEffectHandling == EH_AR2 )
+	{
+		EmitSound( "Weapon_functank.Single" );
+	}
+	else
+	{
+		if ( m_iEffectHandling == EH_COMBINE_CANNON )
+		{
+			DoMuzzleFlash();
+			EmitSound( "NPC_Combine_Cannon.FireBullet" );
+		}
+
+		if ( m_iszSpriteSmoke != NULL_STRING )
+		{
+			CSprite *pSprite = CSprite::SpriteCreate(
+				STRING( m_iszSpriteSmoke ), barrelEnd, TRUE );
+			pSprite->AnimateAndDie( random->RandomFloat( 15.0, 20.0 ) );
+			pSprite->SetTransparency( kRenderTransAlpha,
+				m_clrRender->r, m_clrRender->g, m_clrRender->b,
+				255, kRenderFxNone );
+			pSprite->SetAbsVelocity( Vector( 0, 0,
+				random->RandomFloat( 40, 80 ) ) );
+			pSprite->SetScale( m_spriteScale );
+		}
+		if ( m_iszSpriteFlash != NULL_STRING )
+		{
+			CSprite *pSprite = CSprite::SpriteCreate(
+				STRING( m_iszSpriteFlash ), barrelEnd, TRUE );
+			pSprite->AnimateAndDie( 5 );
+			pSprite->SetTransparency( kRenderTransAdd,
+				255, 255, 255, 255, kRenderFxNoDissipation );
+			pSprite->SetScale( m_spriteScale );
+		}
+	}
+#else
 	// If we have a specific effect handler, apply it's effects
 	if ( m_iEffectHandling == EH_AR2 )
 	{
@@ -2238,6 +2371,7 @@ void CFuncTank::Fire( int bulletCount, const Vector &barrelEnd, const Vector &fo
 			pSprite->SetScale( m_spriteScale );
 		}
 	}
+#endif
 
 	if( pAttacker && pAttacker->IsPlayer() )
 	{
@@ -2252,7 +2386,11 @@ void CFuncTank::Fire( int bulletCount, const Vector &barrelEnd, const Vector &fo
 	}
 
 
-	m_OnFire.FireOutput(this, this);
+#if defined( HL2MP )
+	m_OnFire.FireOutput( m_hController.Get(), GetMoveParent() );
+#else
+	m_OnFire.FireOutput( this, this );
+#endif
 	m_bReadyToFire = false;
 }
 
@@ -2431,6 +2569,9 @@ public:
 	void Fire( int bulletCount, const Vector &barrelEnd, const Vector &forward, CBaseEntity *pAttacker, bool bIgnoreSpread );
 };
 LINK_ENTITY_TO_CLASS( func_tank, CFuncTankGun );
+#if defined( HL2MP )
+LINK_ENTITY_TO_CLASS( func_tank_fof, CFuncTankGun );
+#endif
 
 //-----------------------------------------------------------------------------
 // Purpose: 
@@ -2459,7 +2600,7 @@ void CFuncTankGun::Fire( int bulletCount, const Vector &barrelEnd, const Vector 
 	info.m_pAttacker = pAttacker;
 	info.m_pAdditionalIgnoreEnt = GetParent();
 
-#ifdef HL2_EPISODIC
+#if defined( HL2_EPISODIC ) || defined( HL2MP )
 	if ( m_iAmmoType != -1 )
 	{
 		for ( i = 0; i < bulletCount; i++ )
@@ -2493,7 +2634,7 @@ void CFuncTankGun::Fire( int bulletCount, const Vector &barrelEnd, const Vector 
 			break;
 		}
 	}
-#endif // HL2_EPISODIC
+#endif
 
 	CFuncTank::Fire( bulletCount, barrelEnd, forward, pAttacker, bIgnoreSpread );
 }

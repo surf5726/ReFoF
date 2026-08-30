@@ -10,6 +10,7 @@
 #include "history_resource.h"
 #include "input.h"
 #include "../hud_crosshair.h"
+#include "fof/fof_weapon_properties.h"
 
 #include "VGuiMatSurface/IMatSystemSurface.h"
 #include <KeyValues.h>
@@ -208,9 +209,6 @@ void CHudWeaponSelection::OnWeaponPickup( C_BaseCombatWeapon *pWeapon )
 	}
 }
 
-//-----------------------------------------------------------------------------
-// Purpose: updates animation status
-//-----------------------------------------------------------------------------
 void CHudWeaponSelection::OnThink( void )
 {
 	float flSelectionTimeout = SELECTION_TIMEOUT_THRESHOLD;
@@ -1317,13 +1315,13 @@ void CHudWeaponSelection::FastWeaponSwitch( int iWeaponSlot )
 
 	// see where we should start selection
 	int iPosition = -1;
-	C_BaseCombatWeapon *pActiveWeapon = pPlayer->GetActiveWeapon();
+	C_BaseCombatWeapon *pActiveWeapon = iWeaponSlot == 1 ?
+		pPlayer->GetActiveWeapon2() : pPlayer->GetActiveWeapon1();
 	if ( pActiveWeapon && pActiveWeapon->GetSlot() == iWeaponSlot )
 	{
 		// start after this weapon
 		iPosition = pActiveWeapon->GetPosition();
 	}
-
 	C_BaseCombatWeapon *pNextWeapon = NULL;
 
 	// search for the weapon after the current one
@@ -1334,9 +1332,14 @@ void CHudWeaponSelection::FastWeaponSwitch( int iWeaponSlot )
 		// just look for any weapon in this slot
 		pNextWeapon = FindNextWeaponInWeaponSelection(iWeaponSlot, -1);
 	}
+	const bool bFoFToggleActiveHand = pNextWeapon &&
+		pPlayer->HasDualActiveWeapons() &&
+		FoFIsRevolverWeapon( pNextWeapon ) &&
+		( pNextWeapon == pPlayer->GetActiveWeapon1() ||
+		  pNextWeapon == pPlayer->GetActiveWeapon2() );
 
-	// see if we found a weapon that's different from the current and in the selected slot
-	if ( pNextWeapon && pNextWeapon != pActiveWeapon && pNextWeapon->GetSlot() == iWeaponSlot )
+	if ( pNextWeapon && ( pNextWeapon != pActiveWeapon || bFoFToggleActiveHand ) &&
+		pNextWeapon->GetSlot() == iWeaponSlot )
 	{
 		// select the new weapon
 		::input->MakeWeaponSelection( pNextWeapon );

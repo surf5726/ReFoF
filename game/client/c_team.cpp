@@ -28,6 +28,7 @@ void RecvProxyArrayLength_PlayerArray( void *pStruct, int objectID, int currentA
 		pTeam->m_aPlayers.SetSize( currentArrayLength );
 }
 
+static const int kTeamPlayerArrayCount = 25;
 
 IMPLEMENT_CLIENTCLASS_DT_NOBASE(C_Team, DT_Team, CTeam)
 	RecvPropInt( RECVINFO(m_iTeamNum)),
@@ -38,7 +39,7 @@ IMPLEMENT_CLIENTCLASS_DT_NOBASE(C_Team, DT_Team, CTeam)
 	RecvPropArray2( 
 		RecvProxyArrayLength_PlayerArray,
 		RecvPropInt( "player_array_element", 0, SIZEOF_IGNORE, 0, RecvProxy_PlayerList ), 
-		MAX_PLAYERS, 
+		kTeamPlayerArrayCount,
 		0, 
 		"player_array"
 		)

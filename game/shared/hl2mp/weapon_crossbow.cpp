@@ -52,6 +52,9 @@ class CCrossbowBolt : public CBaseCombatCharacter
 public:
 	CCrossbowBolt() { };
 	~CCrossbowBolt();
+#if defined( GAME_DLL )
+	virtual void NetworkStateChanged_m_iAmmo( void ) {}
+#endif
 
 	Class_T Classify( void ) { return CLASS_NONE; }
 
@@ -473,7 +476,9 @@ END_PREDICTION_DATA()
 
 LINK_ENTITY_TO_CLASS( weapon_crossbow, CWeaponCrossbow );
 
+#if !defined( GAME_DLL )
 PRECACHE_WEAPON_REGISTER( weapon_crossbow );
+#endif
 
 #ifndef CLIENT_DLL
 
@@ -639,7 +644,8 @@ void CWeaponCrossbow::FireBolt( void )
 	QAngle angAiming;
 	VectorAngles( vecAiming, angAiming );
 
-	CCrossbowBolt *pBolt = CCrossbowBolt::BoltCreate( vecSrc, angAiming, GetHL2MPWpnData().m_iPlayerDamage, pOwner );
+	CCrossbowBolt *pBolt = CCrossbowBolt::BoltCreate( vecSrc, angAiming,
+		GetHL2MPWpnData().m_iPlayerDamage, pOwner );
 
 	if ( pOwner->GetWaterLevel() == 3 )
 	{

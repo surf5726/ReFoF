@@ -94,7 +94,11 @@ void CTEPlayerDecal::Test( const Vector& current_origin, const QAngle& current_a
 IMPLEMENT_SERVERCLASS_ST(CTEPlayerDecal, DT_TEPlayerDecal)
 	SendPropVector( SENDINFO(m_vecOrigin), -1, SPROP_COORD),
 	SendPropInt( SENDINFO(m_nEntity), MAX_EDICT_BITS, SPROP_UNSIGNED ),
+#if defined( HL2MP )
+	SendPropInt( SENDINFO(m_nPlayer), 4, SPROP_UNSIGNED ),
+#else
 	SendPropInt( SENDINFO(m_nPlayer), Q_log2( MAX_PLAYERS ), SPROP_UNSIGNED ),
+#endif
 END_SEND_TABLE()
 
 

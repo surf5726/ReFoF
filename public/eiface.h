@@ -456,8 +456,9 @@ public:
 typedef IVEngineServer IVEngineServer021;
 typedef IVEngineServer IVEngineServer022;
 
-// AlliedModders - Shim until all supported mods are using the SDK Base that has this
-#if 0
+// FoF exposes ServerGameDLL010. Keep the AlliedModders fallback for
+// non-game targets while selecting the game-server ABI under GAME_DLL.
+#if defined( GAME_DLL )
 #define INTERFACEVERSION_SERVERGAMEDLL_VERSION_8	"ServerGameDLL008"
 #define INTERFACEVERSION_SERVERGAMEDLL_VERSION_9	"ServerGameDLL009"
 #define INTERFACEVERSION_SERVERGAMEDLL				"ServerGameDLL010"

@@ -111,8 +111,6 @@ struct MultiPlayerPoseData_t
 	int			m_iAimYaw;
 	int			m_iAimPitch;
 	int			m_iBodyHeight;
-	int			m_iMoveYaw;
-	int			m_iMoveScale;
 
 	float		m_flEstimateYaw;
 	float		m_flLastAimTurnTime;
@@ -124,8 +122,6 @@ struct MultiPlayerPoseData_t
 		m_iAimYaw = 0;
 		m_iAimPitch = 0;
 		m_iBodyHeight = 0;
-		m_iMoveYaw = 0;
-		m_iMoveScale = 0;
 		m_flEstimateYaw = 0.0f;
 		m_flLastAimTurnTime = 0.0f;
 	}
@@ -172,7 +168,7 @@ public:
 	// Creation/Destruction
 	CMultiPlayerAnimState() {}
 	CMultiPlayerAnimState( CBasePlayer *pPlayer, MultiPlayerMovementData_t &movementData );
-	virtual ~CMultiPlayerAnimState();
+	~CMultiPlayerAnimState();
 
 	// This is called by both the client and the server in the same way to trigger events for
 	// players firing, jumping, throwing grenades, etc.
@@ -222,7 +218,7 @@ protected:
 	virtual int SelectWeightedSequence( Activity activity ) { return GetBasePlayer()->SelectWeightedSequence( activity ); }
 	virtual void RestartMainSequence();
 
-	virtual void GetOuterAbsVelocity( Vector& vel );
+	void GetOuterAbsVelocity( Vector& vel );
 	float GetOuterXYSpeed();
 
 	virtual bool HandleJumping( Activity &idealActivity );
@@ -237,11 +233,10 @@ protected:
 	void	ShutdownGestureSlots( void );
 	bool	IsGestureSlotPlaying( int iGestureSlot, Activity iGestureActivity );
 	void	AddToGestureSlot( int iGestureSlot, Activity iGestureActivity, bool bAutoKill );
-	virtual void RestartGesture( int iGestureSlot, Activity iGestureActivity, bool bAutoKill = true );
+	void RestartGesture( int iGestureSlot, Activity iGestureActivity, bool bAutoKill = true );
 	void	ComputeGestureSequence( CStudioHdr *pStudioHdr );
 	void	UpdateGestureLayer( CStudioHdr *pStudioHdr, GestureSlot_t *pGesture );
 	void	DebugGestureInfo( void );
-	virtual float	GetGesturePlaybackRate( void ) { return 1.0f; }
 
 #ifdef CLIENT_DLL
 	void	RunGestureSlotAnimEventsToCompletion( GestureSlot_t *pGesture );
@@ -249,12 +244,7 @@ protected:
 
 	virtual void PlayFlinchGesture( Activity iActivity );
 
-	virtual float CalcMovementSpeed( bool *bIsMoving );
 	virtual float CalcMovementPlaybackRate( bool *bIsMoving );
-
-	void DoMovementTest( CStudioHdr *pStudioHdr, float flX, float flY );
-	void DoMovementTest( CStudioHdr *pStudioHdr );
-	void GetMovementFlags( CStudioHdr *pStudioHdr );
 
 	// Pose parameters.
 	bool				SetupPoseParameters( CStudioHdr *pStudioHdr );
@@ -275,7 +265,7 @@ protected:
 	void ComputeFireSequence();
 	void ComputeDeployedSequence();
 
-	virtual bool ShouldUpdateAnimState();
+	bool ShouldUpdateAnimState();
 
 	void				DebugShowAnimStateForPlayer( bool bIsServer );
 	void				DebugShowEyeYaw( void );
@@ -339,9 +329,6 @@ protected:
 #endif
 	float m_flMaxGroundSpeed;
 
-	// movement playback options
-	int m_nMovementSequence;
-	LegAnimType_t m_LegAnimType;
 };
 
 // If this is set, then the game code needs to make sure to send player animation events

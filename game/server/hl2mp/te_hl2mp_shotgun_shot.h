@@ -20,7 +20,8 @@ void TE_HL2MPFireBullets(
 	int iShots,
 	float flSpread, 
 	bool bDoTracers,
-	bool bDoImpacts );
+	bool bDoImpacts,
+	bool bPrimary = true );
 
 
 #endif // TE_HL2MP_SHOTGUN_SHOT_H

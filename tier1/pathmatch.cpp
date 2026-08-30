@@ -789,6 +789,11 @@ extern "C" {
 		return CALL(stat)( CWrap( path, false ), buf );
 	}
 
+	WRAP(stat64, int, const char *path, struct stat64 *buf)
+	{
+		return CALL(stat64)( CWrap( path, false ), buf );
+	}
+
 	WRAP(lstat, int, const char *path, struct stat *buf)
 	{
 		return CALL(lstat)( CWrap( path, false ), buf );

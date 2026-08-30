@@ -10,6 +10,7 @@
 #include "util_shared.h"
 #include "prediction.h"
 #include "movevars_shared.h"
+#include "fof/fof_viewmodel.h"
 #include "in_buttons.h"
 #include "text_message.h"
 #include "vgui_controls/Controls.h"
@@ -553,6 +554,7 @@ void C_HLTVCamera::SetMode(int iMode)
 
 	int iOldMode = m_nCameraMode;
 	m_nCameraMode = iMode;
+	FoFRefreshSourceTVViewModelVisibility();
 
 	IGameEvent *event = gameeventmanager->CreateEvent( "hltv_changed_mode" );
 	if ( event )
@@ -571,6 +573,7 @@ void C_HLTVCamera::SetPrimaryTarget( int nEntity )
 
 	int iOldTarget = m_iTraget1;
 	m_iTraget1 = nEntity;
+	FoFRefreshSourceTVViewModelVisibility();
 
 	if ( GetMode() == OBS_MODE_ROAMING )
 	{

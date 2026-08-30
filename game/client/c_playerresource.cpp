@@ -9,9 +9,7 @@
 #include "c_team.h"
 #include "gamestringpool.h"
 
-#ifdef HL2MP
 #include "hl2mp_gamerules.h"
-#endif
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -21,6 +19,8 @@ const float PLAYER_RESOURCE_THINK_INTERVAL = 0.2f;
 IMPLEMENT_CLIENTCLASS_DT_NOBASE(C_PlayerResource, DT_PlayerResource, CPlayerResource)
 	RecvPropArray3( RECVINFO_ARRAY(m_iPing), RecvPropInt( RECVINFO(m_iPing[0]))),
 	RecvPropArray3( RECVINFO_ARRAY(m_iScore), RecvPropInt( RECVINFO(m_iScore[0]))),
+	RecvPropArray3( RECVINFO_ARRAY(m_iExp), RecvPropInt( RECVINFO(m_iExp[0]))),
+	RecvPropArray3( RECVINFO_ARRAY(m_iFoFState), RecvPropInt( RECVINFO(m_iFoFState[0]))),
 	RecvPropArray3( RECVINFO_ARRAY(m_iDeaths), RecvPropInt( RECVINFO(m_iDeaths[0]))),
 	RecvPropArray3( RECVINFO_ARRAY(m_bConnected), RecvPropInt( RECVINFO(m_bConnected[0]))),
 	RecvPropArray3( RECVINFO_ARRAY(m_iTeam), RecvPropInt( RECVINFO(m_iTeam[0]))),
@@ -53,6 +53,8 @@ C_PlayerResource::C_PlayerResource()
 	memset( m_iPing, 0, sizeof( m_iPing ) );
 //	memset( m_iPacketloss, 0, sizeof( m_iPacketloss ) );
 	memset( m_iScore, 0, sizeof( m_iScore ) );
+	memset( m_iExp, 0, sizeof( m_iExp ) );
+	memset( m_iFoFState, 0, sizeof( m_iFoFState ) );
 	memset( m_iDeaths, 0, sizeof( m_iDeaths ) );
 	memset( m_bConnected, 0, sizeof( m_bConnected ) );
 	memset( m_iTeam, 0, sizeof( m_iTeam ) );
@@ -60,16 +62,14 @@ C_PlayerResource::C_PlayerResource()
 	memset( m_iHealth, 0, sizeof( m_iHealth ) );
 	m_szUnconnectedName = 0;
 	
-	for ( int i=0; i<MAX_TEAMS; i++ )
-	{
-		m_Colors[i] = COLOR_GREY;
-	}
-
-#ifdef HL2MP
-	m_Colors[TEAM_COMBINE] = COLOR_BLUE;
-	m_Colors[TEAM_REBELS] = COLOR_RED;
-	m_Colors[TEAM_UNASSIGNED] = COLOR_YELLOW;
-#endif
+	for ( int i = 0; i < ARRAYSIZE( m_Colors ); ++i )
+		m_Colors[i] = Color( 204, 204, 204, 255 );
+	m_Colors[TEAM_UNASSIGNED] = Color( 255, 228, 0, 255 );
+	m_Colors[TEAM_SPECTATOR] = Color( 204, 204, 204, 255 );
+	m_Colors[2] = Color( 62, 117, 225, 255 );
+	m_Colors[3] = Color( 225, 60, 60, 255 );
+	m_Colors[4] = Color( 220, 180, 20, 255 );
+	m_Colors[5] = Color( 22, 150, 20, 255 );
 
 	g_PR = this;
 }
@@ -80,6 +80,18 @@ C_PlayerResource::C_PlayerResource()
 C_PlayerResource::~C_PlayerResource()
 {
 	g_PR = NULL;
+}
+
+int C_PlayerResource::GetFoFExp( int nPlayerIndex ) const
+{
+	return nPlayerIndex >= 0 && nPlayerIndex < ARRAYSIZE( m_iExp ) ?
+		m_iExp[nPlayerIndex] : 0;
+}
+
+int C_PlayerResource::GetFoFState( int nPlayerIndex ) const
+{
+	return nPlayerIndex >= 0 && nPlayerIndex < ARRAYSIZE( m_iFoFState ) ?
+		m_iFoFState[nPlayerIndex] : 0;
 }
 
 void C_PlayerResource::OnDataChanged(DataUpdateType_t updateType)

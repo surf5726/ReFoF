@@ -74,8 +74,6 @@ protected:
 	bool	m_punted;
 };
 
-LINK_ENTITY_TO_CLASS( npc_grenade_frag, CGrenadeFrag );
-
 BEGIN_DATADESC( CGrenadeFrag )
 
 	// Fields

@@ -1611,7 +1611,9 @@ void CBaseEntity::FireBullets( const FireBulletsInfo_t &info )
 	bool bDoServerEffects = true;
 
 #if defined( HL2MP ) && defined( GAME_DLL )
-	bDoServerEffects = false;
+	// FoF renders NPC and mounted-weapon bullet effects on the server so the
+	// firing entity's tracer override remains authoritative.
+	bDoServerEffects = IsNPC() || ClassMatches( "func_tank_fof" );
 #endif
 
 #if defined( GAME_DLL )

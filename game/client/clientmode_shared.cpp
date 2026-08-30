@@ -33,6 +33,9 @@
 #include "achievementmgr.h"
 #include "c_playerresource.h"
 #include "cam_thirdperson.h"
+
+#include "fof/fof_hud.h"
+#include "hl2mp/clientmode_hl2mpnormal.h"
 #include <vgui/ILocalize.h>
 #include "hud_vote.h"
 #include "ienginevgui.h"
@@ -200,8 +203,12 @@ static void __MsgFunc_VGUIMenu( bf_read &msg )
 	msg.ReadString( panelname, sizeof(panelname) );
 
 	bool  bShow = msg.ReadByte()!=0;
-	
-	IViewPortPanel *viewport = gViewPortInterface->FindPanelByName( panelname );
+
+	FoFOnViewportPanelMessage( panelname, bShow );
+	const char *resolvedPanelName = FoFResolveViewportPanelName( panelname );
+
+	IViewPortPanel *viewport =
+		gViewPortInterface->FindPanelByName( resolvedPanelName );
 
 	if ( !viewport )
 	{
@@ -230,9 +237,9 @@ static void __MsgFunc_VGUIMenu( bf_read &msg )
 
 		// !KLUDGE! Whitelist of URL protocols formats for MOTD
 		if (
-			!V_stricmp( panelname, PANEL_INFO ) // MOTD
+			!V_stricmp( resolvedPanelName, PANEL_INFO ) // MOTD
 			&& keys->GetInt( "type", 0 ) == 2 // URL message type
-		) {
+			) {
 			const char *pszURL = keys->GetString( "msg", "" );
 			if ( Q_strncmp( pszURL, "http://", 7 ) != 0 && Q_strncmp( pszURL, "https://", 8 ) != 0 && Q_stricmp( pszURL, "about:blank" ) != 0 )
 			{
@@ -258,7 +265,7 @@ static void __MsgFunc_VGUIMenu( bf_read &msg )
 
 	// is the server trying to show an MOTD panel? Check that it's allowed right now.
 	ClientModeShared *mode = ( ClientModeShared * )GetClientModeNormal();
-	if ( Q_stricmp( panelname, PANEL_INFO ) == 0 && mode )
+	if ( Q_stricmp( resolvedPanelName, PANEL_INFO ) == 0 && mode )
 	{
 		if ( !mode->IsInfoPanelAllowed() )
 		{
@@ -755,6 +762,10 @@ int ClientModeShared::HandleSpectatorKeyInput( int down, ButtonCode_t keynum, co
 //-----------------------------------------------------------------------------
 int ClientModeShared::HudElementKeyInput( int down, ButtonCode_t keynum, const char *pszCurrentBinding )
 {
+	CHudFoF *fofHud = FoFHud();
+	if ( fofHud && fofHud->HandleMenuKeyInput( down, (int)keynum ) )
+		return 0;
+
 	if ( m_pWeaponSelection )
 	{
 		if ( !m_pWeaponSelection->KeyInput( down, keynum, pszCurrentBinding ) )
@@ -961,6 +972,58 @@ bool PlayerNameNotSetYet( const char *pszName )
 	return false;
 }
 
+static bool FoFIsFakeClientForPlayerEvent(
+	const C_BasePlayer *pPlayer, int userID )
+{
+	if ( pPlayer && ( pPlayer->GetFlags() & FL_FAKECLIENT ) )
+		return true;
+
+	if ( !engine || userID <= 0 )
+		return false;
+
+	player_info_t playerInfo;
+	const int playerIndex = engine->GetPlayerForUserID( userID );
+	if ( playerIndex > 0 &&
+		engine->GetPlayerInfo( playerIndex, &playerInfo ) )
+	{
+		return playerInfo.fakeplayer;
+	}
+
+	for ( int i = 1; i <= gpGlobals->maxClients; ++i )
+	{
+		if ( engine->GetPlayerInfo( i, &playerInfo ) &&
+			playerInfo.userID == userID )
+		{
+			return playerInfo.fakeplayer;
+		}
+	}
+
+	return false;
+}
+
+static bool FoFShouldSuppressPlayerEventChat(
+	const char *eventName, const C_BasePlayer *pPlayer, int userID )
+{
+	if ( !eventName ||
+		!FoFIsFakeClientForPlayerEvent( pPlayer, userID ) )
+	{
+		return false;
+	}
+
+	if ( !Q_stricmp( eventName, "player_connect_client" ) ||
+		!Q_stricmp( eventName, "player_disconnect" ) )
+	{
+		return true;
+	}
+
+	if ( Q_stricmp( eventName, "player_team" ) )
+		return false;
+
+	ConVar *pCurrentMode = cvar ?
+		cvar->FindVar( "fof_sv_currentmode" ) : NULL;
+	return pCurrentMode && pCurrentMode->GetInt() == 6;
+}
+
 void ClientModeShared::FireGameEvent( IGameEvent *event )
 {
 	CBaseHudChat *hudChat = (CBaseHudChat *)GET_HUDELEMENT( CHudChat );
@@ -971,6 +1034,12 @@ void ClientModeShared::FireGameEvent( IGameEvent *event )
 	{
 		if ( !hudChat )
 			return;
+
+		C_BasePlayer *pPlayer = USERID2PLAYER( event->GetInt( "userid" ) );
+		if ( !pPlayer || FoFShouldSuppressPlayerEventChat( eventname, pPlayer,
+			event->GetInt( "userid" ) ) )
+			return;
+
 		if ( PlayerNameNotSetYet(event->GetString("name")) )
 			return;
 
@@ -993,6 +1062,11 @@ void ClientModeShared::FireGameEvent( IGameEvent *event )
 
 		if ( !hudChat || !pPlayer )
 			return;
+
+		if ( FoFShouldSuppressPlayerEventChat( eventname, pPlayer,
+			event->GetInt( "userid" ) ) )
+			return;
+
 		if ( PlayerNameNotSetYet(event->GetString("name")) )
 			return;
 
@@ -1039,6 +1113,10 @@ void ClientModeShared::FireGameEvent( IGameEvent *event )
 		if ( bDisconnected )
 			return;
 
+		const bool bSuppressTeamMessage =
+			FoFShouldSuppressPlayerEventChat( eventname, pPlayer,
+				event->GetInt( "userid" ) );
+
 		int team = event->GetInt( "team" );
 		bool bAutoTeamed = event->GetInt( "autoteam", false );
 		bool bSilent = event->GetInt( "silent", false );
@@ -1047,7 +1125,7 @@ void ClientModeShared::FireGameEvent( IGameEvent *event )
 		if ( PlayerNameNotSetYet( pszName ) )
 			return;
 
-		if ( !bSilent )
+		if ( !bSilent && !bSuppressTeamMessage )
 		{
 			wchar_t wszPlayerName[MAX_PLAYER_NAME_LENGTH];
 			g_pVGuiLocalize->ConvertANSIToUnicode( pszName, wszPlayerName, sizeof(wszPlayerName) );
@@ -1136,7 +1214,7 @@ void ClientModeShared::FireGameEvent( IGameEvent *event )
 			}
 		}
 
-		if ( team == 0 && GetLocalTeam() > 0 )
+		if ( team == 0 && GetLocalTeam() != NULL )
 		{
 			bValidTeam = false;
 		}
@@ -1514,4 +1592,3 @@ void ClientModeShared::DeactivateInGameVGuiContext()
 {
 	vgui::ivgui()->ActivateContext( DEFAULT_VGUI_CONTEXT );
 }
-

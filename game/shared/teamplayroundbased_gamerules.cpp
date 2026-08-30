@@ -105,7 +105,15 @@ BEGIN_NETWORK_TABLE_NOBASE( CTeamplayRoundBasedRules, DT_TeamplayRoundBasedRules
 	SendPropArray3( SENDINFO_ARRAY3(m_bTeamReady), SendPropBool( SENDINFO_ARRAY(m_bTeamReady) ) ),
 	SendPropBool( SENDINFO( m_bStopWatch ) ),
 	SendPropBool( SENDINFO( m_bMultipleTrains ) ),
+#if defined( GAME_DLL )
+	SendPropArray3( "m_bPlayerReady",
+		offsetof( currentSendDTClass::MakeANetworkVar_m_bPlayerReady,
+			m_bPlayerReady ),
+		sizeof( ((currentSendDTClass *)0)->m_bPlayerReady[0] ), 25,
+		SendPropBool( SENDINFO_ARRAY( m_bPlayerReady ) ) ),
+#else
 	SendPropArray3( SENDINFO_ARRAY3(m_bPlayerReady), SendPropBool( SENDINFO_ARRAY(m_bPlayerReady) ) ),
+#endif
 	SendPropBool( SENDINFO( m_bCheatsEnabledDuringLevel ) ),
 #endif
 END_NETWORK_TABLE()

@@ -8,6 +8,12 @@
 #include "weapon_hl2mpbasehlmpcombatweapon.h"
 
 #include "hl2mp_player_shared.h"
+#include "fof/fof_player_shared.h"
+#include "fof/fof_weapon_ballistics.h"
+#include "fof/fof_weapon_activities.h"
+#if defined( CLIENT_DLL )
+#include "fof/fof_viewmodel.h"
+#endif
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -49,31 +55,149 @@ extern ConVar sk_auto_reload_time;
 
 CBaseHL2MPCombatWeapon::CBaseHL2MPCombatWeapon( void )
 {
-
+#ifdef CLIENT_DLL
+	Q_memset( m_FoFClientLayoutPad, 0, sizeof( m_FoFClientLayoutPad ) );
+#endif
 }
 
-//-----------------------------------------------------------------------------
-// Purpose: 
-//-----------------------------------------------------------------------------
 void CBaseHL2MPCombatWeapon::ItemHolsterFrame( void )
 {
 	BaseClass::ItemHolsterFrame();
 
-	// Must be player held
-	if ( GetOwner() && GetOwner()->IsPlayer() == false )
+	CBaseCombatCharacter *pOwner = GetOwner();
+	if ( pOwner && !pOwner->IsPlayer() )
 		return;
 
-	// We can't be active
-	if ( GetOwner()->GetActiveWeapon() == this )
+	if ( !pOwner || pOwner->GetActiveWeapon() == this )
 		return;
 
-	// If it's been longer than three seconds, reload
-	if ( ( gpGlobals->curtime - m_flHolsterTime ) > sk_auto_reload_time.GetFloat() )
+	// FoF deliberately does not run HL2's timed holstered auto-reload
+	// here.  It finishes this path by resolving the primary-hand handle.
+	// Preserve that hand-aware access without reintroducing HL2MP reload logic.
+	pOwner->GetActiveWeapon1();
+}
+
+void CBaseHL2MPCombatWeapon::WeaponIdle( void )
+{
+	Activity idleActivity = ACT_INVALID;
+	if ( WeaponShouldBeLowered() )
 	{
-		// Just load the clip with no animations
-		FinishReload();
-		m_flHolsterTime = gpGlobals->curtime;
+		if ( GetActivity() != ACT_VM_IDLE_LOWERED &&
+			GetActivity() != ACT_VM_IDLE_TO_LOWERED &&
+			GetActivity() != ACT_TRANSITION )
+		{
+			idleActivity = ACT_VM_IDLE_LOWERED;
+		}
+		else if ( HasWeaponIdleTimeElapsed() )
+		{
+			idleActivity = ACT_VM_IDLE_LOWERED;
+		}
 	}
+	else if ( ( m_flRaiseTime < gpGlobals->curtime &&
+		GetActivity() == ACT_VM_IDLE_LOWERED ) ||
+		HasWeaponIdleTimeElapsed() )
+	{
+		idleActivity = ACT_VM_IDLE;
+	}
+
+	if ( idleActivity != ACT_INVALID )
+		SendWeaponAnim( idleActivity );
+}
+
+float CBaseHL2MPCombatWeapon::FoFActionSequenceDuration(
+	float flFallbackDuration,
+	bool bSetWeaponIdleTime )
+{
+#ifdef CLIENT_DLL
+	float flDuration = SequenceDuration();
+	if ( !IsFinite( flDuration ) || flDuration < 0.05f )
+		flDuration = GetViewModelSequenceDuration();
+#else
+	float flDuration = GetViewModelSequenceDuration();
+	if ( !IsFinite( flDuration ) || flDuration < 0.05f )
+		flDuration = SequenceDuration();
+#endif
+	if ( !IsFinite( flDuration ) || flDuration < 0.05f )
+		flDuration = flFallbackDuration;
+	if ( bSetWeaponIdleTime )
+		SetWeaponIdleTime( gpGlobals->curtime + flDuration );
+	return flDuration;
+}
+
+bool CBaseHL2MPCombatWeapon::FoFAutoReloadEnabled(
+	const CBasePlayer *pOwner ) const
+{
+	const CFoF_Player *pFoFOwner =
+		dynamic_cast< const CFoF_Player * >( pOwner );
+	return pFoFOwner &&
+		( pFoFOwner->GetFoFPlayerInfo() & 0x20 ) != 0 &&
+		( GetWeaponFlags() & ITEM_FLAG_NOAUTORELOAD ) == 0;
+}
+
+void CBaseHL2MPCombatWeapon::FoFEmitPrimaryAttack(
+	CBasePlayer *pOwner,
+	int nShots,
+	float flAutoAimScale,
+	float flDamage,
+	int iPlayerDamage,
+	int nFlags )
+{
+	if ( !pOwner )
+		return;
+
+	pOwner->SetAnimation( PLAYER_ATTACK1 );
+	CFoF_Player *pFoFOwner = ToFoFPlayer( pOwner );
+	if ( !pFoFOwner )
+		return;
+
+	pFoFOwner->DoAnimationEvent( PLAYERANIMEVENT_ATTACK_PRIMARY, 0 );
+#ifndef CLIENT_DLL
+	if ( flDamage == 0.0f && iPlayerDamage == 0 )
+	{
+		const CHL2MPSWeaponInfo &weaponInfo = GetHL2MPWpnData();
+		flDamage = static_cast< float >( weaponInfo.m_iPlayerDamage );
+		iPlayerDamage = weaponInfo.m_iPlayerDamage;
+	}
+#endif
+	FoFFirePrimaryBullets(
+		pOwner,
+		m_iPrimaryAmmoType,
+		nShots,
+		flAutoAimScale,
+		pFoFOwner->GetFoFCrosshairAperture( 0 ),
+		flDamage,
+		iPlayerDamage,
+		nFlags );
+}
+
+void CBaseHL2MPCombatWeapon::FoFEmitReloadAnimationEvent(
+	CBasePlayer *pOwner )
+{
+	CFoF_Player *pFoFOwner = ToFoFPlayer( pOwner );
+	if ( pFoFOwner )
+		pFoFOwner->DoAnimationEvent( PLAYERANIMEVENT_RELOAD, 0 );
+}
+
+void CBaseHL2MPCombatWeapon::FoFPlayDryFire(
+	float flFallbackDuration,
+	bool bSetWeaponIdleTime )
+{
+	WeaponSound( EMPTY );
+	SendWeaponAnim( ACT_VM_DRYFIRE );
+	m_flNextPrimaryAttack = gpGlobals->curtime +
+		FoFActionSequenceDuration(
+			flFallbackDuration, bSetWeaponIdleTime );
+}
+
+bool CBaseHL2MPCombatWeapon::FoFRejectUnderwaterPrimaryAttack(
+	CBasePlayer *pOwner )
+{
+	if ( !pOwner || pOwner->GetWaterLevel() != 3 || m_bFiresUnderwater )
+		return false;
+
+	WeaponSound( EMPTY );
+	m_flNextPrimaryAttack = gpGlobals->curtime + 0.2f;
+	return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -146,6 +270,21 @@ bool CBaseHL2MPCombatWeapon::Holster( CBaseCombatWeapon *pSwitchingTo )
 {
 	if ( BaseClass::Holster( pSwitchingTo ) )
 	{
+		CFoF_Player *pOwner = ToFoFPlayer( ToBasePlayer( GetOwner() ) );
+		if ( pOwner )
+		{
+#ifdef CLIENT_DLL
+			pOwner->SetFoFSightExpFactor( 0.0f );
+#else
+			pOwner->m_flSightExpFactor = 0.0f;
+			if ( ( pOwner->m_nPlayerInfo & 0x10 ) &&
+				!pOwner->HasDualActiveWeapons() )
+			{
+				pOwner->m_nPlayerInfo &= ~0x10;
+			}
+#endif
+		}
+
 		SetWeaponVisible( false );
 		m_flHolsterTime = gpGlobals->curtime;
 		return true;
@@ -178,162 +317,7 @@ bool CBaseHL2MPCombatWeapon::WeaponShouldBeLowered( void )
 	return false;
 }
 
-//-----------------------------------------------------------------------------
-// Purpose: Allows the weapon to choose proper weapon idle animation
-//-----------------------------------------------------------------------------
-void CBaseHL2MPCombatWeapon::WeaponIdle( void )
-{
-	//See if we should idle high or low
-	if ( WeaponShouldBeLowered() )
-	{
-		// Move to lowered position if we're not there yet
-		if ( GetActivity() != ACT_VM_IDLE_LOWERED && GetActivity() != ACT_VM_IDLE_TO_LOWERED 
-			 && GetActivity() != ACT_TRANSITION )
-		{
-			SendWeaponAnim( ACT_VM_IDLE_LOWERED );
-		}
-		else if ( HasWeaponIdleTimeElapsed() )
-		{
-			// Keep idling low
-			SendWeaponAnim( ACT_VM_IDLE_LOWERED );
-		}
-	}
-	else
-	{
-		// See if we need to raise immediately
-		if ( m_flRaiseTime < gpGlobals->curtime && GetActivity() == ACT_VM_IDLE_LOWERED ) 
-		{
-			SendWeaponAnim( ACT_VM_IDLE );
-		}
-		else if ( HasWeaponIdleTimeElapsed() ) 
-		{
-			SendWeaponAnim( ACT_VM_IDLE );
-		}
-	}
-}
-
 #if defined( CLIENT_DLL )
-
-#define	HL2_BOB_CYCLE_MIN	1.0f
-#define	HL2_BOB_CYCLE_MAX	0.45f
-#define	HL2_BOB			0.002f
-#define	HL2_BOB_UP		0.5f
-
-extern float	g_lateralBob;
-extern float	g_verticalBob;
-
-static ConVar	cl_bobcycle( "cl_bobcycle","0.8" );
-static ConVar	cl_bob( "cl_bob","0.002" );
-static ConVar	cl_bobup( "cl_bobup","0.5" );
-
-// Register these cvars if needed for easy tweaking
-static ConVar	v_iyaw_cycle( "v_iyaw_cycle", "2", FCVAR_REPLICATED | FCVAR_CHEAT );
-static ConVar	v_iroll_cycle( "v_iroll_cycle", "0.5", FCVAR_REPLICATED | FCVAR_CHEAT );
-static ConVar	v_ipitch_cycle( "v_ipitch_cycle", "1", FCVAR_REPLICATED | FCVAR_CHEAT );
-static ConVar	v_iyaw_level( "v_iyaw_level", "0.3", FCVAR_REPLICATED | FCVAR_CHEAT );
-static ConVar	v_iroll_level( "v_iroll_level", "0.1", FCVAR_REPLICATED | FCVAR_CHEAT );
-static ConVar	v_ipitch_level( "v_ipitch_level", "0.3", FCVAR_REPLICATED | FCVAR_CHEAT );
-
-//-----------------------------------------------------------------------------
-// Purpose: 
-// Output : float
-//-----------------------------------------------------------------------------
-float CBaseHL2MPCombatWeapon::CalcViewmodelBob( void )
-{
-	static	float bobtime;
-	static	float lastbobtime;
-	float	cycle;
-	
-	CBasePlayer *player = ToBasePlayer( GetOwner() );
-	//Assert( player );
-
-	//NOTENOTE: For now, let this cycle continue when in the air, because it snaps badly without it
-
-	if ( ( !gpGlobals->frametime ) || ( player == NULL ) )
-	{
-		//NOTENOTE: We don't use this return value in our case (need to restructure the calculation function setup!)
-		return 0.0f;// just use old value
-	}
-
-	//Find the speed of the player
-	float speed = player->GetLocalVelocity().Length2D();
-
-	//FIXME: This maximum speed value must come from the server.
-	//		 MaxSpeed() is not sufficient for dealing with sprinting - jdw
-
-	speed = clamp( speed, -320, 320 );
-
-	float bob_offset = RemapVal( speed, 0, 320, 0.0f, 1.0f );
-	
-	bobtime += ( gpGlobals->curtime - lastbobtime ) * bob_offset;
-	lastbobtime = gpGlobals->curtime;
-
-	//Calculate the vertical bob
-	cycle = bobtime - (int)(bobtime/HL2_BOB_CYCLE_MAX)*HL2_BOB_CYCLE_MAX;
-	cycle /= HL2_BOB_CYCLE_MAX;
-
-	if ( cycle < HL2_BOB_UP )
-	{
-		cycle = M_PI * cycle / HL2_BOB_UP;
-	}
-	else
-	{
-		cycle = M_PI + M_PI*(cycle-HL2_BOB_UP)/(1.0 - HL2_BOB_UP);
-	}
-	
-	g_verticalBob = speed*0.005f;
-	g_verticalBob = g_verticalBob*0.3 + g_verticalBob*0.7*sin(cycle);
-
-	g_verticalBob = clamp( g_verticalBob, -7.0f, 4.0f );
-
-	//Calculate the lateral bob
-	cycle = bobtime - (int)(bobtime/HL2_BOB_CYCLE_MAX*2)*HL2_BOB_CYCLE_MAX*2;
-	cycle /= HL2_BOB_CYCLE_MAX*2;
-
-	if ( cycle < HL2_BOB_UP )
-	{
-		cycle = M_PI * cycle / HL2_BOB_UP;
-	}
-	else
-	{
-		cycle = M_PI + M_PI*(cycle-HL2_BOB_UP)/(1.0 - HL2_BOB_UP);
-	}
-
-	g_lateralBob = speed*0.005f;
-	g_lateralBob = g_lateralBob*0.3 + g_lateralBob*0.7*sin(cycle);
-	g_lateralBob = clamp( g_lateralBob, -7.0f, 4.0f );
-	
-	//NOTENOTE: We don't use this return value in our case (need to restructure the calculation function setup!)
-	return 0.0f;
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: 
-// Input  : &origin - 
-//			&angles - 
-//			viewmodelindex - 
-//-----------------------------------------------------------------------------
-void CBaseHL2MPCombatWeapon::AddViewmodelBob( CBaseViewModel *viewmodel, Vector &origin, QAngle &angles )
-{
-	Vector	forward, right;
-	AngleVectors( angles, &forward, &right, NULL );
-
-	CalcViewmodelBob();
-
-	// Apply bob, but scaled down to 40%
-	VectorMA( origin, g_verticalBob * 0.1f, forward, origin );
-	
-	// Z bob a bit more
-	origin[2] += g_verticalBob * 0.1f;
-	
-	// bob the angles
-	angles[ ROLL ]	+= g_verticalBob * 0.5f;
-	angles[ PITCH ]	-= g_verticalBob * 0.4f;
-
-	angles[ YAW ]	-= g_lateralBob  * 0.3f;
-
-	VectorMA( origin, g_lateralBob * 0.8f, right, origin );
-}
 
 //-----------------------------------------------------------------------------
 Vector CBaseHL2MPCombatWeapon::GetBulletSpread( WeaponProficiency_t proficiency )

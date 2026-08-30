@@ -176,6 +176,12 @@ public:
 private:
 	CBaseViewModel( const CBaseViewModel & ); // not defined, not accessible
 
+#if defined( CLIENT_DLL )
+	void UpdateFoFSequencePresentation( int nSequence );
+	void RestartFoFSequencePresentation( int nSequence );
+	void ClearFoFSequencePresentation();
+#endif
+
 #endif
 
 private:
@@ -201,6 +207,19 @@ private:
 
 	typedef CHandle< CBaseCombatWeapon > CBaseCombatWeaponHandle;
 	CNetworkVar( CBaseCombatWeaponHandle, m_hWeapon );
+
+#if defined( CLIENT_DLL )
+	// Repeating a viewmodel sequence (for example, reload2 for every inserted
+	// Spencer round) needs a presentation clock which prediction rollback
+	// cannot restore to the previous insert.
+	bool					m_bFoFSequencePresentationActive;
+	int						m_nFoFSequencePresentation;
+	float					m_flFoFSequencePresentationStart;
+	CBaseCombatWeaponHandle	m_hFoFSequencePresentationWeapon;
+	int						m_nFoFSequencePresentationRestartSerial;
+	int						m_nFoFLastLagUpdateFrame;
+	Vector					m_vecFoFViewModelLagDifference;
+#endif
 
 	// Control panel
 	typedef CHandle<CVGuiScreen>	ScreenHandle_t;

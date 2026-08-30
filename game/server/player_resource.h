@@ -27,16 +27,20 @@ public:
 	virtual int  UpdateTransmitState(void);
 
 protected:
+	enum { PLAYER_RESOURCE_ARRAY_COUNT = 26 };
+
 	// Data for each player that's propagated to all clients
 	// Stored in individual arrays so they can be sent down via datatables
-	CNetworkArray( int, m_iPing, MAX_PLAYERS+1 );
-	CNetworkArray( int, m_iScore, MAX_PLAYERS+1 );
-	CNetworkArray( int, m_iDeaths, MAX_PLAYERS+1 );
-	CNetworkArray( int, m_bConnected, MAX_PLAYERS+1 );
-	CNetworkArray( int, m_iTeam, MAX_PLAYERS+1 );
-	CNetworkArray( int, m_bAlive, MAX_PLAYERS+1 );
-	CNetworkArray( int, m_iHealth, MAX_PLAYERS+1 );
-		
+	CNetworkArray( int, m_iPing, PLAYER_RESOURCE_ARRAY_COUNT );
+	CNetworkArray( int, m_iScore, PLAYER_RESOURCE_ARRAY_COUNT );
+	CNetworkArray( int, m_iExp, PLAYER_RESOURCE_ARRAY_COUNT );
+	CNetworkArray( int, m_iDeaths, PLAYER_RESOURCE_ARRAY_COUNT );
+	CNetworkArray( int, m_bConnected, PLAYER_RESOURCE_ARRAY_COUNT );
+	CNetworkArray( int, m_iTeam, PLAYER_RESOURCE_ARRAY_COUNT );
+	CNetworkArray( int, m_bAlive, PLAYER_RESOURCE_ARRAY_COUNT );
+	CNetworkArray( int, m_iHealth, PLAYER_RESOURCE_ARRAY_COUNT );
+	CNetworkArray( int, m_iFoFState, PLAYER_RESOURCE_ARRAY_COUNT );
+
 	int	m_nUpdateCounter;
 };
 

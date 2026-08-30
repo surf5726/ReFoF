@@ -26,6 +26,7 @@
 #include <vgui_controls/AnimationController.h>
 #include <vgui/ISurface.h>
 #include "hud_lcd.h"
+#include "fof/fof_hud.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -287,6 +288,9 @@ void CHudElement::SetHiddenBits( int iBits )
 //-----------------------------------------------------------------------------
 bool CHudElement::ShouldDraw( void )
 {
+	if ( !FoFHudShouldDraw() )
+		return false;
+
 	bool bShouldDraw = ( !gHUD.IsHidden( m_iHiddenBits ) );
 
 	if ( bShouldDraw )
@@ -434,7 +438,7 @@ void CHud::Init( void )
 				}
 
 				KeyValues *key = kv->FindKey( pPanel->GetName(), false );
-				if ( !key )
+				if ( !key && !FoFHudUsesProgrammaticLayout( pPanel->GetName() ) )
 				{
 					Msg( "Hud element '%s' doesn't have an entry '%s' in scripts/HudLayout.res\n", m_HudList[i]->GetName(), pPanel->GetName() );
 				}
@@ -1196,4 +1200,3 @@ CON_COMMAND_F( testhudanim, "Test a hud element animation.\n\tArguments: <anim n
 
 	g_pClientMode->GetViewportAnimationController()->StartAnimationSequence( args[1] );
 }
-

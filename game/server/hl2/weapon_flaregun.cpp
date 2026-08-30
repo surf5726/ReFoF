@@ -138,6 +138,12 @@ CFlare::CFlare( void )
 	m_pNextFlare	= NULL;
 }
 
+#if defined( HL2MP )
+void CFlare::NetworkStateChanged_m_iAmmo( void )
+{
+}
+#endif
+
 CFlare::~CFlare()
 {
 	CSoundEnvelopeController::GetController().SoundDestroy( m_pBurnSound );

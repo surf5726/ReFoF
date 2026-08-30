@@ -71,6 +71,7 @@ public:
 	// interpolation will be done correctly on the client.
 	// This defaults to off.
 	void	UseClientSideAnimation();
+	void	UseServerSideAnimation();
 
 	// Tells whether or not we're using client-side animation. Used for controlling
 	// the transmission of animtime.

@@ -164,8 +164,8 @@ public:
 
 	// Sprint Device
 	void StartAutoSprint( void );
-	void StartSprinting( void );
-	void StopSprinting( void );
+	virtual void StartSprinting( void );
+	virtual void StopSprinting( void );
 	void InitSprinting( void );
 	bool IsSprinting( void ) { return m_fIsSprinting; }
 	bool CanSprint( void );
@@ -179,9 +179,9 @@ public:
 	void CheckSuitZoom( void );
 
 	// Walking
-	void StartWalking( void );
-	void StopWalking( void );
-	bool IsWalking( void ) { return m_fIsWalking; }
+	virtual void StartWalking( void );
+	virtual void StopWalking( void );
+	virtual bool IsWalking( void ) { return m_fIsWalking; }
 
 	// Aiming heuristics accessors
 	virtual float		GetIdleTime( void ) const { return ( m_flIdleTime - m_flMoveTime ); }

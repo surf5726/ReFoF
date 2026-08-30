@@ -36,6 +36,10 @@
 #include "basemultiplayerplayer.h"
 #include "voice_gamemgr.h"
 
+#ifdef HL2MP
+#include "hl2mp_gamerules.h"
+#endif
+
 #ifdef TF_DLL
 #include "tf_player.h"
 #include "tf_gamerules.h"
@@ -165,6 +169,20 @@ void Host_Say( edict_t *pEdict, const CCommand &args, bool teamonly )
 	// We can get a raw string now, without the "say " prepended
 	if ( args.ArgC() == 0 )
 		return;
+
+#ifdef HL2MP
+	// FoF consumes this chat command before normal chat filtering.
+	if ( pEdict && args.ArgC() > 1 && !Q_stricmp( args[1], "nobots" ) )
+	{
+		CBasePlayer *pNoBotsPlayer = static_cast< CBasePlayer * >(
+			CBaseEntity::Instance( pEdict ) );
+		if ( pNoBotsPlayer && pNoBotsPlayer->IsConnected() && HL2MPRules() )
+		{
+			HL2MPRules()->HandleFoFNoBotsVote( pNoBotsPlayer );
+			return;
+		}
+	}
+#endif
 
 	if ( !stricmp( pcmd, cpSay) || !stricmp( pcmd, cpSayTeam ) )
 	{

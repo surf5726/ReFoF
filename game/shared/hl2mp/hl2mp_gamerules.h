@@ -100,6 +100,10 @@ public:
 	virtual bool ShouldCollide( int collisionGroup0, int collisionGroup1 );
 	virtual bool ClientCommand( CBaseEntity *pEdict, const CCommand &args );
 
+#ifndef CLIENT_DLL
+	virtual bool FoFAllowEntitySpawn( const char *pszClassname );
+#endif
+
 	virtual float FlWeaponRespawnTime( CBaseCombatWeapon *pWeapon );
 	virtual float FlWeaponTryRespawn( CBaseCombatWeapon *pWeapon );
 	virtual Vector VecWeaponRespawnSpot( CBaseCombatWeapon *pWeapon );
@@ -125,6 +129,7 @@ public:
 	virtual Vector VecItemRespawnSpot( CItem *pItem );
 	virtual QAngle VecItemRespawnAngles( CItem *pItem );
 	virtual float	FlItemRespawnTime( CItem *pItem );
+	virtual bool FPlayerCanRespawn( CBasePlayer *pPlayer );
 	virtual bool	CanHavePlayerItem( CBasePlayer *pPlayer, CBaseCombatWeapon *pItem );
 	virtual bool FShouldSwitchWeapon( CBasePlayer *pPlayer, CBaseCombatWeapon *pWeapon );
 
@@ -132,7 +137,28 @@ public:
 	void	RemoveLevelDesignerPlacedObject( CBaseEntity *pEntity );
 	void	ManageObjectRelocation( void );
 	void    CheckChatForReadySignal( CHL2MP_Player *pPlayer, const char *chatmsg );
+	void HandleFoFNoBotsVote( CBasePlayer *pPlayer );
 	const char *GetChatFormat( bool bTeamOnly, CBasePlayer *pPlayer );
+
+#if defined( GAME_DLL )
+	void ResetFoFSafeZoneNetwork();
+	bool SetFoFSafeZoneQuad(
+		int index,
+		const Vector &northWest,
+		const Vector &northEast,
+		const Vector &southWest,
+		const Vector &southEast,
+		bool active );
+	void InitializeFoFTeamplayState();
+	void UpdateFoFTeamplayState();
+	bool IsFoFTeamplayRoundActive() const;
+	bool IsFoFTeamplayWarmup() const;
+	float GetFoFTimeLimitMinutes() const;
+	void ApplyFoFTeamplayRespawnSystem( int nRespawnSystem );
+	bool IsFoFTeamplayRespawnAllowed() const;
+	void FinishFoFTeamplayRound( bool bLastRound );
+	void RestartFoFTeamplayRound();
+#endif
 
 #endif
 	virtual void ClientDisconnected( edict_t *pClient );
@@ -147,10 +173,68 @@ public:
 	void	CheckAllPlayersReady( void );
 
 	virtual bool IsConnectedUserInfoChangeAllowed( CBasePlayer *pPlayer );
-	
+
+	// Final FoF-only CHL2MPRules slot.
+	virtual void GetFoFNeutralColor(
+		int nContext, float &flRed, float &flGreen, float &flBlue );
+
+	int GetFoFTeamClassCount() const;
+	bool IsFoFTeamClassAvailable(
+		int classIndex,
+		int teamNumber ) const;
+
+#if defined( GAME_DLL )
+	void UpdateFoFTeamClassState();
+	int SelectFoFAvailableTeamClass( int teamNumber );
+#endif
+
+#ifdef CLIENT_DLL
+	bool GetFoFSafeZoneQuad(
+		int index,
+		Vector &corner0,
+		Vector &corner1,
+		Vector &corner2,
+		Vector &corner3 ) const;
+	float GetFoFScoreboardTimeRemaining() const;
+#endif
+	float GetFoFNotorietyPayoutProgress() const;
+	int GetFoFNotorietyPayout(
+		int totalNotoriety,
+		int playerNotoriety,
+		int playerCount ) const;
+
+#if defined( GAME_DLL )
+	void ApplyFoFMapOwnedRuleSelection();
+	int GetFoFMapSize() const;
+#endif
+
 private:
-	
+
 	CNetworkVar( bool, m_bTeamPlayEnabled );
+
+	enum
+	{
+		FOF_TEAMPLAY_CLASS_COUNT = 8,
+		FOF_SAFE_ZONE_POINT_COUNT = 500,
+	};
+
+#ifdef CLIENT_DLL
+	void InitializeFoFClientState();
+
+	int m_nMapSize;
+	int m_nTPClassesTotal;
+	float flTimeLimit;
+	int m_nTPClassesUsage[FOF_TEAMPLAY_CLASS_COUNT];
+	int m_nTPClassesSlots[FOF_TEAMPLAY_CLASS_COUNT];
+	int m_nTPClassesUsageDesp[FOF_TEAMPLAY_CLASS_COUNT];
+	int m_nTPClassesSlotsDesp[FOF_TEAMPLAY_CLASS_COUNT];
+	Vector vSafeZone1[FOF_SAFE_ZONE_POINT_COUNT];
+	Vector vSafeZone2[FOF_SAFE_ZONE_POINT_COUNT];
+	Vector vSafeZone3[FOF_SAFE_ZONE_POINT_COUNT];
+	Vector vSafeZone4[FOF_SAFE_ZONE_POINT_COUNT];
+	bool m_bSafeZoneState[FOF_SAFE_ZONE_POINT_COUNT];
+#endif
+
 	CNetworkVar( float, m_flGameStartTime );
 	CUtlVector<EHANDLE> m_hRespawnableItemsAndWeapons;
 	float m_tmNextPeriodicThink;
@@ -161,6 +245,47 @@ private:
 
 #ifndef CLIENT_DLL
 	bool m_bChangelevelDone;
+
+#if defined( GAME_DLL )
+	void InitializeFoFRuleTeams( void );
+	void UpdateFoFServerState( void );
+	void UpdateFoFPeriodicCash( void );
+	void HandleFoFPlayerKilled(
+		CBasePlayer *pVictim, const CTakeDamageInfo &info );
+	void BeginFoFIntermission( void );
+	void HandleFoFClientSettingsChanged( CBasePlayer *pPlayer );
+	void InitializeFoFServerState();
+	void InitializeFoFMapState();
+	void InitializeFoFWarmupState();
+	void UpdateFoFWarmupState();
+	void FinishFoFWarmup();
+	void SetFoFTeamplayRoundState( int nState, float flDelay );
+	float m_flNextFoFTeamClassStateUpdate;
+	float m_flNextFoFCashTick;
+	float m_flFoFWarmupEndTime;
+	bool m_bFoFMapStateInitialized;
+	bool m_bFoFWarmupComplete;
+	EHANDLE m_hFoFTeamplayController;
+	int m_nFoFTeamplayRoundState;
+	float m_flFoFTeamplayStateDeadline;
+	float m_flFoFTeamplayBuyEndTime;
+	int m_nFoFTeamplayRespawnState;
+	int m_nFoFTeamplayLastBuyTick;
+	CUtlVector< uint64 > m_FoFNoBotsVoters;
+
+	CNetworkArray( Vector, vSafeZone1, FOF_SAFE_ZONE_POINT_COUNT );
+	CNetworkArray( Vector, vSafeZone2, FOF_SAFE_ZONE_POINT_COUNT );
+	CNetworkArray( Vector, vSafeZone3, FOF_SAFE_ZONE_POINT_COUNT );
+	CNetworkArray( Vector, vSafeZone4, FOF_SAFE_ZONE_POINT_COUNT );
+	CNetworkArray( bool, m_bSafeZoneState, FOF_SAFE_ZONE_POINT_COUNT );
+	CNetworkVar( int, m_nMapSize );
+	CNetworkVar( int, m_nTPClassesTotal );
+	CNetworkVar( float, flTimeLimit );
+	CNetworkArray( int, m_nTPClassesUsage, FOF_TEAMPLAY_CLASS_COUNT );
+	CNetworkArray( int, m_nTPClassesSlots, FOF_TEAMPLAY_CLASS_COUNT );
+	CNetworkArray( int, m_nTPClassesUsageDesp, FOF_TEAMPLAY_CLASS_COUNT );
+	CNetworkArray( int, m_nTPClassesSlotsDesp, FOF_TEAMPLAY_CLASS_COUNT );
+#endif
 #endif
 };
 

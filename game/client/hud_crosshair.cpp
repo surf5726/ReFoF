@@ -18,6 +18,8 @@
 #include "client_virtualreality.h"
 #include "sourcevr/isourcevirtualreality.h"
 
+#include "fof/fof_crosshair.h"
+
 #ifdef SIXENSE
 #include "sixense/in_sixense.h"
 #endif
@@ -54,11 +56,23 @@ CHudCrosshair::CHudCrosshair( const char *pElementName ) :
 
 	m_vecCrossHairOffsetAngle.Init();
 
-	SetHiddenBits( HIDEHUD_PLAYERDEAD | HIDEHUD_CROSSHAIR );
-}
+	m_pFoFCrosshairState = FoFCreateCrosshairState();
 
+	// FoF keeps the crosshair panel alive while HIDEHUD_CROSSHAIR is set so
+	// world-use markers (for example the whiskey prompt while holding fists)
+	// can still be traced and painted.  FoF initializes this element
+	// with HIDEHUD_PLAYERDEAD only.
+	SetHiddenBits( HIDEHUD_PLAYERDEAD );
+}
 CHudCrosshair::~CHudCrosshair()
 {
+	FoFDestroyCrosshairState( m_pFoFCrosshairState );
+	m_pFoFCrosshairState = NULL;
+}
+
+void CHudCrosshair::Reset()
+{
+	FoFResetCrosshairState( m_pFoFCrosshairState );
 }
 
 void CHudCrosshair::ApplySchemeSettings( IScheme *scheme )
@@ -66,6 +80,7 @@ void CHudCrosshair::ApplySchemeSettings( IScheme *scheme )
 	BaseClass::ApplySchemeSettings( scheme );
 
 	m_pDefaultCrosshair = gHUD.GetIcon("crosshair_default");
+	FoFApplyCrosshairScheme( m_pFoFCrosshairState, scheme );
 	SetPaintBackgroundEnabled( false );
 
     SetSize( ScreenWidth(), ScreenHeight() );
@@ -89,8 +104,7 @@ bool CHudCrosshair::ShouldDraw( void )
 	if ( !pPlayer )
 		return false;
 
-	C_BaseCombatWeapon *pWeapon = pPlayer->GetActiveWeapon();
-	if ( pWeapon && !pWeapon->ShouldDrawCrosshair() )
+	if ( FoFShouldSuppressWeaponCrosshair( pPlayer ) )
 		return false;
 
 #ifdef PORTAL
@@ -232,9 +246,6 @@ void CHudCrosshair::GetDrawPosition ( float *pX, float *pY, bool *pbBehindCamera
 
 void CHudCrosshair::Paint( void )
 {
-	if ( !m_pCrosshair )
-		return;
-
 	if ( !IsCurrentViewAccessAllowed() )
 		return;
 
@@ -246,38 +257,10 @@ void CHudCrosshair::Paint( void )
 	bool bBehindCamera;
 	GetDrawPosition ( &x, &y, &bBehindCamera, m_vecCrossHairOffsetAngle );
 
-	if( bBehindCamera )
+	if ( bBehindCamera )
 		return;
 
-	float flWeaponScale = 1.f;
-	int iTextureW = m_pCrosshair->Width();
-	int iTextureH = m_pCrosshair->Height();
-	C_BaseCombatWeapon *pWeapon = pPlayer->GetActiveWeapon();
-	if ( pWeapon )
-	{
-		pWeapon->GetWeaponCrosshairScale( flWeaponScale );
-	}
-
-	float flPlayerScale = 1.0f;
-#ifdef TF_CLIENT_DLL
-	Color clr( cl_crosshair_red.GetInt(), cl_crosshair_green.GetInt(), cl_crosshair_blue.GetInt(), 255 );
-	flPlayerScale = cl_crosshair_scale.GetFloat() / 32.0f;  // the player can change the scale in the options/multiplayer tab
-#else
-	Color clr = m_clrCrosshair;
-#endif
-	float flWidth = flWeaponScale * flPlayerScale * (float)iTextureW;
-	float flHeight = flWeaponScale * flPlayerScale * (float)iTextureH;
-	int iWidth = (int)( flWidth + 0.5f );
-	int iHeight = (int)( flHeight + 0.5f );
-	int iX = (int)( x + 0.5f );
-	int iY = (int)( y + 0.5f );
-
-	m_pCrosshair->DrawSelfCropped (
-		iX-(iWidth/2), iY-(iHeight/2),
-		0, 0,
-		iTextureW, iTextureH,
-		iWidth, iHeight,
-		clr );
+	FoFPaintCrosshair( m_pFoFCrosshairState, pPlayer, x, y );
 }
 
 //-----------------------------------------------------------------------------

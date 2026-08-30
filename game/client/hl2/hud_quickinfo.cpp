@@ -174,17 +174,10 @@ void CHUDQuickInfo::DrawWarning( int x, int y, CHudTexture *icon, float &time )
 //-----------------------------------------------------------------------------
 bool CHUDQuickInfo::ShouldDraw( void )
 {
-	if ( !m_icon_c || !m_icon_rb || !m_icon_rbe || !m_icon_lb || !m_icon_lbe )
-		return false;
-
-	C_BasePlayer *player = C_BasePlayer::GetLocalPlayer();
-	if ( player == NULL )
-		return false;
-
-	if ( !crosshair.GetBool() && !IsX360() )
-		return false;
-
-	return ( CHudElement::ShouldDraw() && !engine->IsDrawingLoadingImage() );
+	// The inherited HL2 quick-info reticle remains registered for ABI
+	// compatibility, but its ShouldDraw override returns
+	// false unconditionally.  FoF draws its own crosshair and aperture HUD.
+	return false;
 }
 
 //-----------------------------------------------------------------------------

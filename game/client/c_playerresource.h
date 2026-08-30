@@ -52,6 +52,8 @@ public : // IGameResources intreface
 	virtual int		GetTeam( int index );
 	virtual int		GetFrags( int index );
 	virtual int		GetHealth( int index );
+	virtual int		GetFoFExp( int playerIndex ) const;
+	virtual int		GetFoFState( int playerIndex ) const;
 
 	virtual void ClientThink();
 	virtual	void	OnDataChanged(DataUpdateType_t updateType);
@@ -64,6 +66,8 @@ protected:
 	string_t	m_szName[MAX_PLAYERS+1];
 	int		m_iPing[MAX_PLAYERS+1];
 	int		m_iScore[MAX_PLAYERS+1];
+	int		m_iExp[26];
+	int		m_iFoFState[26];
 	int		m_iDeaths[MAX_PLAYERS+1];
 	bool	m_bConnected[MAX_PLAYERS+1];
 	int		m_iTeam[MAX_PLAYERS+1];

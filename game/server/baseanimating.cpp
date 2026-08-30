@@ -389,6 +389,11 @@ void CBaseAnimating::UseClientSideAnimation()
 	m_bClientSideAnimation = true;
 }
 
+void CBaseAnimating::UseServerSideAnimation()
+{
+	m_bClientSideAnimation = false;
+}
+
 #define MAX_ANIMTIME_INTERVAL 0.2f
 
 //-----------------------------------------------------------------------------

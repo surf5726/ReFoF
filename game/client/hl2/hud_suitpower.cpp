@@ -60,16 +60,9 @@ void CHudSuitPower::Reset( void )
 //-----------------------------------------------------------------------------
 bool CHudSuitPower::ShouldDraw()
 {
-	bool bNeedsDraw = false;
-
-	C_BaseHLPlayer *pPlayer = (C_BaseHLPlayer *)C_BasePlayer::GetLocalPlayer();
-	if ( !pPlayer )
-		return false;
-
-	// needs draw if suit power changed or animation in progress
-	bNeedsDraw = ( ( pPlayer->m_HL2Local.m_flSuitPower != m_flSuitPower ) || ( m_AuxPowerColor[3] > 0 ) );
-
-	return ( bNeedsDraw && CHudElement::ShouldDraw() );
+	// Keep the stock class registered, but never paint HL2's auxiliary-power
+	// panel in the FoF HUD.
+	return false;
 }
 
 //-----------------------------------------------------------------------------

@@ -88,6 +88,7 @@
 #endif
 #include "tier3/tier3.h"
 #include "serverbenchmark_base.h"
+#include "fof/fof_rounds.h"
 #include "querycache.h"
 
 
@@ -1131,6 +1132,7 @@ void CServerGameDLL::ServerActivate( edict_t *pEdictList, int edictCount, int cl
 	// load the Navigation Mesh for this map
 	TheNavMesh->Load();
 	TheNavMesh->OnServerActivate();
+	FoFGenerateRespawnProbeMap();
 #endif
 #endif
 

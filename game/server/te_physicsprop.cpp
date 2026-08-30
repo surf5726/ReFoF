@@ -111,7 +111,11 @@ IMPLEMENT_SERVERCLASS_ST(CTEPhysicsProp, DT_TEPhysicsProp)
 	SendPropModelIndex( SENDINFO(m_nModelIndex) ),
 	SendPropInt( SENDINFO(m_nSkin), ANIMATION_SKIN_BITS),
 	SendPropInt( SENDINFO(m_nFlags), 2, SPROP_UNSIGNED ),
+#if defined( HL2MP )
+	SendPropInt( SENDINFO(m_nEffects), 13, SPROP_UNSIGNED),
+#else
 	SendPropInt( SENDINFO(m_nEffects), EF_MAX_BITS, SPROP_UNSIGNED),
+#endif
 END_SEND_TABLE()
 
 // Singleton to fire TEBreakModel objects

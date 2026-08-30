@@ -8,7 +8,7 @@
 #include "hudelement.h"
 #include "hud_macros.h"
 #include "c_playerresource.h"
-#include "clientmode_hl2mpnormal.h"
+#include "hl2mp/clientmode_hl2mpnormal.h"
 #include <vgui_controls/Controls.h>
 #include <vgui_controls/Panel.h>
 #include <vgui/ISurface.h>
@@ -31,7 +31,7 @@ struct DeathNoticePlayer
 };
 
 // Contents of each entry in our list of death notices
-struct DeathNoticeItem 
+struct DeathNoticeItem
 {
 	DeathNoticePlayer	Killer;
 	DeathNoticePlayer   Victim;
@@ -39,10 +39,11 @@ struct DeathNoticeItem
 	int			iSuicide;
 	float		flDisplayTime;
 	bool		bHeadshot;
+	bool		bPenetration;
 };
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 class CHudDeathNotice : public CHudElement, public vgui::Panel
 {
@@ -58,22 +59,23 @@ public:
 
 	void SetColorForNoticePlayer( int iTeamNumber );
 	void RetireExpiredDeathNotices( void );
-	
+
 	virtual void FireGameEvent( IGameEvent * event );
 
 private:
 
-	CPanelAnimationVarAliasType( float, m_flLineHeight, "LineHeight", "15", "proportional_float" );
+	CPanelAnimationVarAliasType( float, m_flLineHeight, "LineHeight", "17", "proportional_float" );
 
-	CPanelAnimationVar( float, m_flMaxDeathNotices, "MaxDeathNotices", "4" );
+	CPanelAnimationVar( float, m_flMaxDeathNotices, "MaxDeathNotices", "5" );
 
 	CPanelAnimationVar( bool, m_bRightJustify, "RightJustify", "1" );
 
-	CPanelAnimationVar( vgui::HFont, m_hTextFont, "TextFont", "HudNumbersTimer" );
+	CPanelAnimationVar( vgui::HFont, m_hTextFont, "TextFont", "HudSelectionNumbers2" );
 
 	// Texture for skull symbol
-	CHudTexture		*m_iconD_skull;  
-	CHudTexture		*m_iconD_headshot;  
+	CHudTexture		*m_iconD_skull;
+	CHudTexture		*m_iconD_headshot;
+	CHudTexture		*m_iconD_penetration;
 
 	CUtlVector<DeathNoticeItem> m_DeathNotices;
 };
@@ -83,7 +85,7 @@ using namespace vgui;
 DECLARE_HUDELEMENT( CHudDeathNotice );
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 CHudDeathNotice::CHudDeathNotice( const char *pElementName ) :
 	CHudElement( pElementName ), BaseClass( NULL, "HudDeathNotice" )
@@ -92,34 +94,44 @@ CHudDeathNotice::CHudDeathNotice( const char *pElementName ) :
 	SetParent( pParent );
 
 	m_iconD_headshot = NULL;
+	m_iconD_penetration = NULL;
 	m_iconD_skull = NULL;
 
 	SetHiddenBits( HIDEHUD_MISCSTATUS );
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 void CHudDeathNotice::ApplySchemeSettings( IScheme *scheme )
 {
 	BaseClass::ApplySchemeSettings( scheme );
+	SetPaintBorderEnabled( false );
 	SetPaintBackgroundEnabled( false );
+
+	// FoF deliberately has no HudDeathNotice block in HudLayout.res.  The
+	// original panel therefore sizes itself to the current framebuffer here;
+	// leaving the SDK's tiny default bounds makes right-justified notices
+	// collapse into the upper-left corner.
+	SetSize( ScreenWidth(), ScreenHeight() );
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 void CHudDeathNotice::Init( void )
 {
-	ListenForGameEvent( "player_death" );	
+	ListenForGameEvent( "player_death" );
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 void CHudDeathNotice::VidInit( void )
 {
 	m_iconD_skull = gHUD.GetIcon( "d_skull" );
+	m_iconD_headshot = gHUD.GetIcon( "headshot" );
+	m_iconD_penetration = gHUD.GetIcon( "penetration" );
 	m_DeathNotices.Purge();
 }
 
@@ -132,7 +144,7 @@ bool CHudDeathNotice::ShouldDraw( void )
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 void CHudDeathNotice::SetColorForNoticePlayer( int iTeamNumber )
 {
@@ -140,7 +152,7 @@ void CHudDeathNotice::SetColorForNoticePlayer( int iTeamNumber )
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 void CHudDeathNotice::Paint()
 {
@@ -182,6 +194,10 @@ void CHudDeathNotice::Paint()
 
 		int iconWide;
 		int iconTall;
+		int headshotWide = 0;
+		int headshotTall = 0;
+		int penetrationWide = 0;
+		int penetrationTall = 0;
 
 		if( icon->bRenderUsingFont )
 		{
@@ -195,16 +211,46 @@ void CHudDeathNotice::Paint()
 			iconTall = (int)( scale * (float)icon->Height() );
 		}
 
+		if ( m_DeathNotices[i].bHeadshot && m_iconD_headshot )
+		{
+			if ( m_iconD_headshot->bRenderUsingFont )
+			{
+				headshotWide = surface()->GetCharacterWidth( m_iconD_headshot->hFont, m_iconD_headshot->cCharacterInFont );
+				headshotTall = surface()->GetFontTall( m_iconD_headshot->hFont );
+			}
+			else
+			{
+				float scale = ( (float)ScreenHeight() / 480.0f );
+				headshotWide = (int)( scale * (float)m_iconD_headshot->Width() );
+				headshotTall = (int)( scale * (float)m_iconD_headshot->Height() );
+			}
+		}
+
+		if ( m_DeathNotices[i].bPenetration && m_iconD_penetration )
+		{
+			if ( m_iconD_penetration->bRenderUsingFont )
+			{
+				penetrationWide = surface()->GetCharacterWidth( m_iconD_penetration->hFont, m_iconD_penetration->cCharacterInFont );
+				penetrationTall = surface()->GetFontTall( m_iconD_penetration->hFont );
+			}
+			else
+			{
+				float scale = ( (float)ScreenHeight() / 480.0f );
+				penetrationWide = (int)( scale * (float)m_iconD_penetration->Width() );
+				penetrationTall = (int)( scale * (float)m_iconD_penetration->Height() );
+			}
+		}
+
 		int x;
 		if ( m_bRightJustify )
 		{
-			x =	GetWide() - len - iconWide;
+			x =	GetWide() - len - iconWide - penetrationWide - headshotWide;
 		}
 		else
 		{
 			x = 0;
 		}
-		
+
 		// Only draw killers name if it wasn't a suicide
 		if ( !m_DeathNotices[i].iSuicide )
 		{
@@ -222,12 +268,28 @@ void CHudDeathNotice::Paint()
 			surface()->DrawGetTextPos( x, y );
 		}
 
-		Color iconColor( 255, 80, 0, 255 );
+		// FoF renders every death glyph (weapon, skull, headshot, etc.) in the
+		// same pale neutral tint; player names retain their team colors.
+		Color iconColor( 218, 228, 222, 255 );
 
 		// Draw death weapon
 		//If we're using a font char, this will ignore iconTall and iconWide
 		icon->DrawSelf( x, y, iconWide, iconTall, iconColor );
-		x += iconWide;		
+		x += iconWide;
+
+		// The original FoF client appends the optional death modifiers after
+		// the weapon glyph, in penetration-then-headshot order.
+		if ( penetrationWide > 0 )
+		{
+			m_iconD_penetration->DrawSelf( x, y, penetrationWide, penetrationTall, iconColor );
+			x += penetrationWide;
+		}
+
+		if ( headshotWide > 0 )
+		{
+			m_iconD_headshot->DrawSelf( x, y, headshotWide, headshotTall, iconColor );
+			x += headshotWide;
+		}
 
 		SetColorForNoticePlayer( iVictimTeam );
 
@@ -308,6 +370,8 @@ void CHudDeathNotice::FireGameEvent( IGameEvent * event )
 	Q_strncpy( deathMsg.Victim.szName, victim_name, MAX_PLAYER_NAME_LENGTH );
 	deathMsg.flDisplayTime = gpGlobals->curtime + hud_deathnotice_time.GetFloat();
 	deathMsg.iSuicide = ( !killer || killer == victim );
+	deathMsg.bHeadshot = event->GetBool( "headshot", false );
+	deathMsg.bPenetration = event->GetBool( "penetration", false );
 
 	// Try and find the death identifier in the icon list
 	deathMsg.iconDeath = gHUD.GetIcon( fullkilledwith );
@@ -347,6 +411,3 @@ void CHudDeathNotice::FireGameEvent( IGameEvent * event )
 
 	Msg( "%s", sDeathMsg );
 }
-
-
-

@@ -11,9 +11,19 @@
 #include "takedamageinfo.h"
 #include "hl2mp_gamerules.h"
 #include "in_buttons.h"
-#include "iviewrender_beams.h"			// flashlight beam
-#include "r_efx.h"
+#include "fof/c_fof_player.h"
+#include "fof/fof_client_settings.h"
+#include "fof/fof_player_shared.h"
+#include "hl2mp/hl2mp_playeranimstate.h"
 #include "dlight.h"
+#include "flashlighteffect.h"
+#include "iviewrender_beams.h"
+#include "physics_shared.h"
+#include "r_efx.h"
+#include "ragdoll.h"
+#include "vphysics/constraints.h"
+
+#include "tier0/memdbgon.h"
 
 // Don't alias here
 #if defined( CHL2MP_Player )
@@ -22,18 +32,64 @@
 
 LINK_ENTITY_TO_CLASS( player, C_HL2MP_Player );
 
-IMPLEMENT_CLIENTCLASS_DT(C_HL2MP_Player, DT_HL2MP_Player, CHL2MP_Player)
+static void RecvProxy_CycleLatch(
+	const CRecvProxyData *pData, void *pStruct, void *pOut )
+{
+	(void)pOut;
+	C_HL2MP_Player *pPlayer = static_cast< C_HL2MP_Player * >( pStruct );
+	const float flServerCycle =
+		static_cast< float >( pData->m_Value.m_Int ) * ( 1.0f / 16.0f );
+	if ( fabsf( pPlayer->GetCycle() - flServerCycle ) > 0.15f )
+		pPlayer->SetServerIntendedCycle( flServerCycle );
+}
+
+// FoF retains the older HL2MP split local/non-local player tables.  Besides
+// matching the server ABI, keeping the origin in these proxy tables preserves
+// the different local prediction and remote interpolation encodings.
+BEGIN_RECV_TABLE_NOBASE( C_HL2MP_Player, DT_HL2MPLocalPlayerExclusive )
+	RecvPropFloat( RECVINFO( m_angEyeAngles[0] ) ),
+	RecvPropVector( RECVINFO_NAME( m_vecNetworkOrigin, m_vecOrigin ) ),
+END_RECV_TABLE()
+
+BEGIN_RECV_TABLE_NOBASE( C_HL2MP_Player, DT_HL2MPNonLocalPlayerExclusive )
 	RecvPropFloat( RECVINFO( m_angEyeAngles[0] ) ),
 	RecvPropFloat( RECVINFO( m_angEyeAngles[1] ) ),
+	RecvPropVector( RECVINFO_NAME( m_vecNetworkOrigin, m_vecOrigin ) ),
+	RecvPropInt( RECVINFO( m_cycleLatch ), 0, RecvProxy_CycleLatch ),
+END_RECV_TABLE()
+
+IMPLEMENT_CLIENTCLASS_DT(C_HL2MP_Player, DT_HL2MP_Player, CHL2MP_Player)
+	RecvPropDataTable( "hl2mplocaldata", 0, 0, &REFERENCE_RECV_TABLE( DT_HL2MPLocalPlayerExclusive ) ),
+	RecvPropDataTable( "hl2mpnonlocaldata", 0, 0, &REFERENCE_RECV_TABLE( DT_HL2MPNonLocalPlayerExclusive ) ),
+
 	RecvPropEHandle( RECVINFO( m_hRagdoll ) ),
-	RecvPropInt( RECVINFO( m_iSpawnInterpCounter ) ),
+	RecvPropInt( RECVINFO_NAME( m_iSpawnInterpCounter, m_bSpawnInterpCounter ) ),
 	RecvPropInt( RECVINFO( m_iPlayerSoundType) ),
 
 	RecvPropBool( RECVINFO( m_fIsWalking ) ),
 END_RECV_TABLE()
 
 BEGIN_PREDICTION_DATA( C_HL2MP_Player )
+	// FoF's original C_HL2MP_Player prediction map overrides the animation
+	// fields inherited from C_BaseAnimating.  Keeping these private/no-error
+	// entries prevents an acknowledged server snapshot from rewinding the
+	// locally replayed player animation while commands are still in flight.
+	DEFINE_PRED_FIELD( m_flCycle, FIELD_FLOAT,
+		FTYPEDESC_PRIVATE | FTYPEDESC_OVERRIDE |
+		FTYPEDESC_NOERRORCHECK ),
 	DEFINE_PRED_FIELD( m_fIsWalking, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_nSequence, FIELD_INTEGER,
+		FTYPEDESC_PRIVATE | FTYPEDESC_OVERRIDE |
+		FTYPEDESC_NOERRORCHECK ),
+	DEFINE_PRED_FIELD( m_flPlaybackRate, FIELD_FLOAT,
+		FTYPEDESC_PRIVATE | FTYPEDESC_OVERRIDE |
+		FTYPEDESC_NOERRORCHECK ),
+	DEFINE_PRED_ARRAY_TOL( m_flEncodedController, FIELD_FLOAT,
+		MAXSTUDIOBONECTRLS,
+		FTYPEDESC_PRIVATE | FTYPEDESC_OVERRIDE, 0.02f ),
+	DEFINE_PRED_FIELD( m_nNewSequenceParity, FIELD_INTEGER,
+		FTYPEDESC_PRIVATE | FTYPEDESC_OVERRIDE |
+		FTYPEDESC_NOERRORCHECK ),
 END_PREDICTION_DATA()
 
 #define	HL2_WALK_SPEED 150
@@ -43,12 +99,252 @@ END_PREDICTION_DATA()
 static ConVar cl_playermodel( "cl_playermodel", "none", FCVAR_USERINFO | FCVAR_ARCHIVE | FCVAR_SERVER_CAN_EXECUTE, "Default Player Model");
 static ConVar cl_defaultweapon( "cl_defaultweapon", "weapon_physcannon", FCVAR_USERINFO | FCVAR_ARCHIVE, "Default Spawn Weapon");
 
+class C_FoFFlashlightEffect : public CFlashlightEffect
+{
+public:
+	explicit C_FoFFlashlightEffect( int nEntIndex ) :
+		CFlashlightEffect( nEntIndex )
+	{
+	}
+};
+
+static void CompleteThirdPersonPlayerBody( C_BaseAnimating *pAnimating )
+{
+	if ( !pAnimating || pAnimating->GetNumBodyGroups() <= 0 ||
+		pAnimating->GetBodygroupCount( 0 ) <= 1 )
+	{
+		return;
+	}
+
+	pAnimating->SetBodygroup( 0, 1 );
+}
+
+IPhysicsObject *GetWorldPhysObject( void );
+
+void C_HL2MP_Player::UpdateFlashlightBeam()
+{
+	if ( !IsEffectActive( EF_DIMLIGHT ) )
+	{
+		ReleaseFlashlight();
+		return;
+	}
+
+	const bool bLocalPlayer = this == C_BasePlayer::GetLocalPlayer();
+	if ( bLocalPlayer && !C_BasePlayer::ShouldDrawLocalPlayer() )
+	{
+		ReleaseFlashlight();
+		return;
+	}
+
+	const int iAttachment = LookupAttachment( "anim_attachment_RH" );
+	if ( iAttachment < 0 )
+		return;
+
+	Vector vecOrigin;
+	QAngle attachmentAngles = GetRenderAngles();
+	GetAttachment( iAttachment, vecOrigin, attachmentAngles );
+
+	Vector vForward;
+	AngleVectors( attachmentAngles, &vForward );
+
+	trace_t tr;
+	UTIL_TraceLine( vecOrigin, vecOrigin + vForward * 200.0f,
+		MASK_SHOT, this, COLLISION_GROUP_NONE, &tr );
+
+	if ( !m_pFlashlightBeam )
+	{
+		BeamInfo_t beamInfo;
+		beamInfo.m_nType = TE_BEAMPOINTS;
+		beamInfo.m_vecStart = tr.startpos;
+		beamInfo.m_vecEnd = tr.endpos;
+		beamInfo.m_pszModelName = "sprites/glow01.vmt";
+		beamInfo.m_pszHaloName = "sprites/glow01.vmt";
+		beamInfo.m_flHaloScale = 3.0f;
+		beamInfo.m_flWidth = 8.0f;
+		beamInfo.m_flEndWidth = 35.0f;
+		beamInfo.m_flFadeLength = 300.0f;
+		beamInfo.m_flAmplitude = 0.0f;
+		beamInfo.m_flBrightness = 60.0f;
+		beamInfo.m_flSpeed = 0.0f;
+		beamInfo.m_nStartFrame = 0;
+		beamInfo.m_flFrameRate = 0.0f;
+		beamInfo.m_flRed = 255.0f;
+		beamInfo.m_flGreen = 255.0f;
+		beamInfo.m_flBlue = 255.0f;
+		beamInfo.m_nSegments = 8;
+		beamInfo.m_bRenderable = true;
+		beamInfo.m_flLife = 0.5f;
+		beamInfo.m_nFlags = FBEAM_FOREVER | FBEAM_ONLYNOISEONCE |
+			FBEAM_NOTILE | FBEAM_HALOBEAM;
+		m_pFlashlightBeam = beams->CreateBeamPoints( beamInfo );
+	}
+
+	if ( !m_pFlashlightBeam )
+		return;
+
+	BeamInfo_t beamInfo;
+	beamInfo.m_vecStart = tr.startpos;
+	beamInfo.m_vecEnd = tr.endpos;
+	beamInfo.m_flRed = 255.0f;
+	beamInfo.m_flGreen = 255.0f;
+	beamInfo.m_flBlue = 255.0f;
+	beams->UpdateBeamInfo( m_pFlashlightBeam, beamInfo );
+
+	if ( bLocalPlayer )
+		return;
+
+	dlight_t *pLight = effects->CL_AllocDlight( 0 );
+	pLight->origin = tr.endpos;
+	pLight->radius = 50.0f;
+	pLight->color.r = 200;
+	pLight->color.g = 200;
+	pLight->color.b = 200;
+	pLight->die = gpGlobals->curtime + 0.1f;
+}
+
+void C_HL2MP_Player::ReleaseFlashlight()
+{
+	if ( !m_pFlashlightBeam )
+		return;
+
+	m_pFlashlightBeam->flags = 0;
+	m_pFlashlightBeam->die = gpGlobals->curtime - 1.0f;
+	m_pFlashlightBeam = NULL;
+}
+
+void C_HL2MP_Player::ReleasePlayerFlashlight()
+{
+	delete m_pPlayerFlashlight;
+	m_pPlayerFlashlight = NULL;
+}
+
+void C_HL2MP_Player::UpdatePlayerFlashlight()
+{
+	if ( !IsEffectActive( EF_DIMLIGHT ) )
+	{
+		ReleasePlayerFlashlight();
+		return;
+	}
+
+	if ( !m_pPlayerFlashlight )
+	{
+		m_pPlayerFlashlight = new C_FoFFlashlightEffect( entindex() );
+		if ( !m_pPlayerFlashlight )
+			return;
+
+		m_pPlayerFlashlight->TurnOn();
+	}
+
+	Vector lightOrigin = EyePosition();
+	Vector forward, right, up;
+	if ( C_BasePlayer::ShouldDrawLocalPlayer() )
+	{
+		const int iAttachment = LookupAttachment( "anim_attachment_RH" );
+		if ( iAttachment >= 0 )
+		{
+			QAngle attachmentAngles = GetRenderAngles();
+			GetAttachment( iAttachment, lightOrigin, attachmentAngles );
+			AngleVectors( attachmentAngles, &forward, &right, &up );
+		}
+		else
+		{
+			EyeVectors( &forward, &right, &up );
+		}
+	}
+	else
+	{
+		EyeVectors( &forward, &right, &up );
+	}
+
+	m_pPlayerFlashlight->UpdateLight(
+		lightOrigin, forward, right, up, 1000 );
+}
+
 void SpawnBlood (Vector vecSpot, const Vector &vecDir, int bloodColor, float flDamage);
 
-C_HL2MP_Player::C_HL2MP_Player() : m_PlayerAnimState( this ), m_iv_angEyeAngles( "C_HL2MP_Player::m_iv_angEyeAngles" )
+ShadowType_t C_HL2MP_Player::ShadowCastType( void )
 {
+	return SHADOWS_NONE;
+}
+
+bool C_HL2MP_Player::ShouldDraw( void )
+{
+	if ( !IsAlive() )
+		return false;
+
+	if ( IsObserver() || GetTeamNumber() == TEAM_SPECTATOR )
+		return false;
+
+	if ( IsLocalPlayer() && IsRagdoll() )
+		return true;
+
+	if ( IsRagdoll() )
+		return false;
+
+	return BaseClass::ShouldDraw();
+}
+
+void C_HL2MP_Player::CalcView(
+	Vector &eyeOrigin,
+	QAngle &eyeAngles,
+	float &zNear,
+	float &zFar,
+	float &fov )
+{
+	const int nObserverMode = GetObserverMode();
+	if ( m_lifeState != LIFE_ALIVE &&
+		( !IsObserver() || nObserverMode == OBS_MODE_NONE ||
+			nObserverMode == OBS_MODE_DEATHCAM ) )
+	{
+		Vector origin = EyePosition();
+		IRagdoll *pRagdoll = GetRepresentativeRagdoll();
+		if ( pRagdoll )
+		{
+			origin = pRagdoll->GetRagdollOrigin();
+			origin.z += VEC_DEAD_VIEWHEIGHT_SCALED( this ).z;
+		}
+
+		BaseClass::CalcView( eyeOrigin, eyeAngles, zNear, zFar, fov );
+		eyeOrigin = origin;
+
+		Vector forward;
+		AngleVectors( eyeAngles, &forward );
+		VectorNormalize( forward );
+		VectorMA( origin, -CHASE_CAM_DISTANCE_MAX, forward, eyeOrigin );
+
+		const Vector wallMin( -WALL_OFFSET, -WALL_OFFSET, -WALL_OFFSET );
+		const Vector wallMax( WALL_OFFSET, WALL_OFFSET, WALL_OFFSET );
+		trace_t trace;
+		C_BaseEntity::PushEnableAbsRecomputations( false );
+		UTIL_TraceHull(
+			origin, eyeOrigin, wallMin, wallMax,
+			MASK_SOLID_BRUSHONLY, this, COLLISION_GROUP_NONE, &trace );
+		C_BaseEntity::PopEnableAbsRecomputations();
+		if ( trace.fraction < 1.0f )
+			eyeOrigin = trace.endpos;
+		return;
+	}
+
+	BaseClass::CalcView( eyeOrigin, eyeAngles, zNear, zFar, fov );
+}
+
+C_BaseAnimating *C_HL2MP_Player::BecomeRagdollOnClient()
+{
+	if ( !IsPlayer() || !( FoFPlayerInfo( this ) & 0x400000 ) )
+		return NULL;
+
+	C_BaseAnimating *pRagdoll = C_BaseAnimating::BecomeRagdollOnClient();
+	CompleteThirdPersonPlayerBody( pRagdoll );
+	return pRagdoll;
+}
+
+C_HL2MP_Player::C_HL2MP_Player() : m_iv_angEyeAngles( "C_HL2MP_Player::m_iv_angEyeAngles" )
+{
+	m_PlayerAnimState = CreateFoFPlayerAnimState( this );
 	m_iIDEntIndex = 0;
 	m_iSpawnInterpCounterCache = 0;
+	m_cycleLatch = 0;
+	m_flServerIntendedCycle = -1.0f;
 
 	m_angEyeAngles.Init();
 
@@ -58,11 +354,16 @@ C_HL2MP_Player::C_HL2MP_Player() : m_PlayerAnimState( this ), m_iv_angEyeAngles(
 	m_blinkTimer.Invalidate();
 
 	m_pFlashlightBeam = NULL;
+	m_pPlayerFlashlight = NULL;
 }
 
 C_HL2MP_Player::~C_HL2MP_Player( void )
 {
+	if ( m_PlayerAnimState )
+		m_PlayerAnimState->Release();
+	m_PlayerAnimState = NULL;
 	ReleaseFlashlight();
+	ReleasePlayerFlashlight();
 }
 
 int C_HL2MP_Player::GetIDTarget() const
@@ -360,94 +661,54 @@ void C_HL2MP_Player::AddEntity( void )
 
 	SetLocalAngles( vTempAngles );
 		
-	m_PlayerAnimState.Update();
-
 	// Zero out model pitch, blending takes care of all of it.
 	SetLocalAnglesDim( X_INDEX, 0 );
 
-	if( this != C_BasePlayer::GetLocalPlayer() )
-	{
-		if ( IsEffectActive( EF_DIMLIGHT ) )
-		{
-			int iAttachment = LookupAttachment( "anim_attachment_RH" );
-
-			if ( iAttachment < 0 )
-				return;
-
-			Vector vecOrigin;
-			QAngle eyeAngles = m_angEyeAngles;
-	
-			GetAttachment( iAttachment, vecOrigin, eyeAngles );
-
-			Vector vForward;
-			AngleVectors( eyeAngles, &vForward );
-				
-			trace_t tr;
-			UTIL_TraceLine( vecOrigin, vecOrigin + (vForward * 200), MASK_SHOT, this, COLLISION_GROUP_NONE, &tr );
-
-			if( !m_pFlashlightBeam )
-			{
-				BeamInfo_t beamInfo;
-				beamInfo.m_nType = TE_BEAMPOINTS;
-				beamInfo.m_vecStart = tr.startpos;
-				beamInfo.m_vecEnd = tr.endpos;
-				beamInfo.m_pszModelName = "sprites/glow01.vmt";
-				beamInfo.m_pszHaloName = "sprites/glow01.vmt";
-				beamInfo.m_flHaloScale = 3.0;
-				beamInfo.m_flWidth = 8.0f;
-				beamInfo.m_flEndWidth = 35.0f;
-				beamInfo.m_flFadeLength = 300.0f;
-				beamInfo.m_flAmplitude = 0;
-				beamInfo.m_flBrightness = 60.0;
-				beamInfo.m_flSpeed = 0.0f;
-				beamInfo.m_nStartFrame = 0.0;
-				beamInfo.m_flFrameRate = 0.0;
-				beamInfo.m_flRed = 255.0;
-				beamInfo.m_flGreen = 255.0;
-				beamInfo.m_flBlue = 255.0;
-				beamInfo.m_nSegments = 8;
-				beamInfo.m_bRenderable = true;
-				beamInfo.m_flLife = 0.5;
-				beamInfo.m_nFlags = FBEAM_FOREVER | FBEAM_ONLYNOISEONCE | FBEAM_NOTILE | FBEAM_HALOBEAM;
-				
-				m_pFlashlightBeam = beams->CreateBeamPoints( beamInfo );
-			}
-
-			if( m_pFlashlightBeam )
-			{
-				BeamInfo_t beamInfo;
-				beamInfo.m_vecStart = tr.startpos;
-				beamInfo.m_vecEnd = tr.endpos;
-				beamInfo.m_flRed = 255.0;
-				beamInfo.m_flGreen = 255.0;
-				beamInfo.m_flBlue = 255.0;
-
-				beams->UpdateBeamInfo( m_pFlashlightBeam, beamInfo );
-
-				dlight_t *el = effects->CL_AllocDlight( 0 );
-				el->origin = tr.endpos;
-				el->radius = 50; 
-				el->color.r = 200;
-				el->color.g = 200;
-				el->color.b = 200;
-				el->die = gpGlobals->curtime + 0.1;
-			}
-		}
-		else if ( m_pFlashlightBeam )
-		{
-			ReleaseFlashlight();
-		}
-	}
+	UpdateFlashlightBeam();
+	UpdatePlayerFlashlight();
 }
 
-ShadowType_t C_HL2MP_Player::ShadowCastType( void ) 
+void C_HL2MP_Player::UpdateClientSideAnimation( void )
 {
-	if ( !IsVisible() )
-		 return SHADOWS_NONE;
+	if ( m_PlayerAnimState )
+	{
+		const QAngle &eyeAngles = EyeAngles();
+		m_PlayerAnimState->Update(
+			eyeAngles[YAW], eyeAngles[PITCH] );
+	}
 
-	return SHADOWS_RENDER_TO_TEXTURE_DYNAMIC;
+	BaseClass::UpdateClientSideAnimation();
 }
 
+void C_HL2MP_Player::SetServerIntendedCycle( float intended )
+{
+	m_flServerIntendedCycle = intended;
+}
+
+float C_HL2MP_Player::GetServerIntendedCycle( void )
+{
+	return m_flServerIntendedCycle;
+}
+
+bool C_HL2MP_Player::ShouldCollide(
+	int nCollisionGroup, int nContentsMask ) const
+{
+	const FoFPlayerCollisionDecision_t nDecision =
+		FoFResolvePlayerTeamCollision(
+			GetTeamNumber(), nCollisionGroup, nContentsMask );
+	if ( nDecision == FOF_PLAYER_COLLISION_ACCEPT )
+		return true;
+	if ( nDecision == FOF_PLAYER_COLLISION_REJECT )
+		return false;
+
+	if ( GetObserverMode() == OBS_MODE_DEATHCAM &&
+		!( nContentsMask & CONTENTS_DEBRIS ) )
+	{
+		return false;
+	}
+
+	return true;
+}
 
 const QAngle& C_HL2MP_Player::GetRenderAngles()
 {
@@ -457,26 +718,9 @@ const QAngle& C_HL2MP_Player::GetRenderAngles()
 	}
 	else
 	{
-		return m_PlayerAnimState.GetRenderAngles();
+		return m_PlayerAnimState ?
+			m_PlayerAnimState->GetRenderAngles() : GetAbsAngles();
 	}
-}
-
-bool C_HL2MP_Player::ShouldDraw( void )
-{
-	// If we're dead, our ragdoll will be drawn for us instead.
-	if ( !IsAlive() )
-		return false;
-
-//	if( GetTeamNumber() == TEAM_SPECTATOR )
-//		return false;
-
-	if( IsLocalPlayer() && IsRagdoll() )
-		return true;
-	
-	if ( IsRagdoll() )
-		return false;
-
-	return BaseClass::ShouldDraw();
 }
 
 void C_HL2MP_Player::NotifyShouldTransmit( ShouldTransmitState_t state )
@@ -514,17 +758,6 @@ void C_HL2MP_Player::PostDataUpdate( DataUpdateType_t updateType )
 	}
 
 	BaseClass::PostDataUpdate( updateType );
-}
-
-void C_HL2MP_Player::ReleaseFlashlight( void )
-{
-	if( m_pFlashlightBeam )
-	{
-		m_pFlashlightBeam->flags = 0;
-		m_pFlashlightBeam->die = gpGlobals->curtime - 1;
-
-		m_pFlashlightBeam = NULL;
-	}
 }
 
 float C_HL2MP_Player::GetFOV( void )
@@ -661,13 +894,6 @@ void C_HL2MP_Player::ItemPreFrame( void )
 	if ( GetFlags() & FL_FROZEN )
 		 return;
 
-	// Disallow shooting while zooming
-	if ( m_nButtons & IN_ZOOM )
-	{
-		//FIXME: Held weapons like the grenade get sad when this happens
-		m_nButtons &= ~(IN_ATTACK|IN_ATTACK2);
-	}
-
 	BaseClass::ItemPreFrame();
 
 }
@@ -678,56 +904,6 @@ void C_HL2MP_Player::ItemPostFrame( void )
 		 return;
 
 	BaseClass::ItemPostFrame();
-}
-
-C_BaseAnimating *C_HL2MP_Player::BecomeRagdollOnClient()
-{
-	// Let the C_CSRagdoll entity do this.
-	// m_builtRagdoll = true;
-	return NULL;
-}
-
-void C_HL2MP_Player::CalcView( Vector &eyeOrigin, QAngle &eyeAngles, float &zNear, float &zFar, float &fov )
-{
-	if ( m_lifeState != LIFE_ALIVE && !IsObserver() )
-	{
-		Vector origin = EyePosition();			
-
-		IRagdoll *pRagdoll = GetRepresentativeRagdoll();
-
-		if ( pRagdoll )
-		{
-			origin = pRagdoll->GetRagdollOrigin();
-			origin.z += VEC_DEAD_VIEWHEIGHT_SCALED( this ).z; // look over ragdoll, not through
-		}
-
-		BaseClass::CalcView( eyeOrigin, eyeAngles, zNear, zFar, fov );
-
-		eyeOrigin = origin;
-		
-		Vector vForward; 
-		AngleVectors( eyeAngles, &vForward );
-
-		VectorNormalize( vForward );
-		VectorMA( origin, -CHASE_CAM_DISTANCE_MAX, vForward, eyeOrigin );
-
-		Vector WALL_MIN( -WALL_OFFSET, -WALL_OFFSET, -WALL_OFFSET );
-		Vector WALL_MAX( WALL_OFFSET, WALL_OFFSET, WALL_OFFSET );
-
-		trace_t trace; // clip against world
-		C_BaseEntity::PushEnableAbsRecomputations( false ); // HACK don't recompute positions while doing RayTrace
-		UTIL_TraceHull( origin, eyeOrigin, WALL_MIN, WALL_MAX, MASK_SOLID_BRUSHONLY, this, COLLISION_GROUP_NONE, &trace );
-		C_BaseEntity::PopEnableAbsRecomputations();
-
-		if (trace.fraction < 1.0)
-		{
-			eyeOrigin = trace.endpos;
-		}
-		
-		return;
-	}
-
-	BaseClass::CalcView( eyeOrigin, eyeAngles, zNear, zFar, fov );
 }
 
 IRagdoll* C_HL2MP_Player::GetRepresentativeRagdoll() const
@@ -753,6 +929,7 @@ IMPLEMENT_CLIENTCLASS_DT_NOBASE( C_HL2MPRagdoll, DT_HL2MPRagdoll, CHL2MPRagdoll 
 	RecvPropInt( RECVINFO( m_nModelIndex ) ),
 	RecvPropInt( RECVINFO(m_nForceBone) ),
 	RecvPropVector( RECVINFO(m_vecForce) ),
+	RecvPropBool( RECVINFO( m_bStickRagdoll ) ),
 	RecvPropVector( RECVINFO( m_vecRagdollVelocity ) )
 END_RECV_TABLE()
 
@@ -760,7 +937,7 @@ END_RECV_TABLE()
 
 C_HL2MPRagdoll::C_HL2MPRagdoll()
 {
-
+	m_bStickRagdoll = false;
 }
 
 C_HL2MPRagdoll::~C_HL2MPRagdoll()
@@ -898,6 +1075,16 @@ void C_HL2MPRagdoll::CreateHL2MPRagdoll( void )
 	}
 
 	SetModelIndex( m_nModelIndex );
+	if ( pPlayer )
+	{
+		m_nBody = pPlayer->GetBody();
+		const int nBodyGroups =
+			MIN( GetNumBodyGroups(), pPlayer->GetNumBodyGroups() );
+		for ( int i = 0; i < nBodyGroups; ++i )
+			SetBodygroup( i, pPlayer->GetBodygroup( i ) );
+
+		CompleteThirdPersonPlayerBody( this );
+	}
 
 	// Make us a ragdoll..
 	m_nRenderFX = kRenderFxRagdoll;
@@ -917,6 +1104,58 @@ void C_HL2MPRagdoll::CreateHL2MPRagdoll( void )
 	}
 
 	InitAsClientRagdoll( boneDelta0, boneDelta1, currentBones, boneDt );
+	if ( !pPlayer )
+		return;
+
+	m_nSkin = pPlayer->GetSkin();
+	SetPoseParameter( 4, pPlayer->GetPoseParameter( 4 ) );
+	SetPoseParameter( 5, pPlayer->GetPoseParameter( 5 ) );
+
+	if ( !m_bStickRagdoll || !m_pRagdoll )
+		return;
+
+	ragdoll_t *pRagdollData = m_pRagdoll->GetRagdoll();
+	IPhysicsObject *pAttached =
+		( pRagdollData && pRagdollData->listCount > 1 ) ?
+			pRagdollData->list[1].pObject : NULL;
+	IPhysicsObject *pReference = GetWorldPhysObject();
+	if ( !pAttached || !pReference || !physenv )
+		return;
+
+	const Vector vecStart = GetAbsOrigin();
+	const Vector vecEnd = vecStart + m_vecForce * 100.0f;
+	Ray_t ray;
+	ray.Init(
+		vecStart, vecEnd,
+		Vector( -5.0f, -5.0f, -5.0f ),
+		Vector( 5.0f, 5.0f, 5.0f ) );
+
+	trace_t trace;
+	CTraceFilterWorldOnly traceFilter;
+	enginetrace->TraceRay(
+		ray, MASK_PLAYERSOLID_BRUSHONLY, &traceFilter, &trace );
+
+	pAttached->SetMass( pAttached->GetMass() * 2.0f );
+
+	Vector vecAttachedOrigin;
+	QAngle angAttached;
+	pAttached->GetPosition( &vecAttachedOrigin, &angAttached );
+
+	constraint_ballsocketparams_t ballsocket;
+	ballsocket.Defaults();
+	pReference->WorldToLocal(
+		&ballsocket.constraintPosition[0], trace.endpos );
+	pAttached->WorldToLocal(
+		&ballsocket.constraintPosition[1], vecAttachedOrigin );
+	physenv->CreateBallsocketConstraint(
+		pReference, pAttached, NULL, ballsocket );
+
+	if ( fof_blood_allowed.GetBool() )
+	{
+		UTIL_BloodDrips(
+			trace.endpos, -m_vecForce,
+			BLOOD_COLOR_RED, 200 );
+	}
 }
 
 

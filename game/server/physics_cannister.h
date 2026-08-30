@@ -45,6 +45,9 @@ class CPhysicsCannister : public CBaseCombatCharacter, public CDefaultPlayerPick
 	DECLARE_CLASS( CPhysicsCannister, CBaseCombatCharacter );
 public:
 	~CPhysicsCannister( void );
+#if defined( HL2MP )
+	virtual void NetworkStateChanged_m_iAmmo( void );
+#endif
 
 	void Spawn( void );
 	void Precache( void );

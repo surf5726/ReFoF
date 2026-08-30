@@ -27,7 +27,6 @@
 	#include "player_resource.h"
 	#include "tactical_mission.h"
 	#include "gamestats.h"
-
 #endif
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -173,6 +172,14 @@ bool CGameRules::CanHaveAmmo( CBaseCombatCharacter *pPlayer, int iAmmoIndex )
 
 	return false;
 }
+
+#if defined( GAME_DLL )
+bool CGameRules::FoFAllowEntitySpawn( const char *pszClassname )
+{
+	(void)pszClassname;
+	return true;
+}
+#endif
 
 //-----------------------------------------------------------------------------
 // Purpose: Return true if the specified player can carry any more of the ammo type

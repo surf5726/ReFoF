@@ -18,6 +18,11 @@
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
+void C_BaseAnimating::ResetAnimationEventParity()
+{
+	m_nPrevResetEventsParity = -1;
+}
+
 extern ConVar r_sequence_debug;
 
 C_BaseAnimatingOverlay::C_BaseAnimatingOverlay()

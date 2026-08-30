@@ -60,8 +60,14 @@ public:
 	virtual void	TryTouchGround( const Vector& start, const Vector& end, const Vector& mins, const Vector& maxs, unsigned int fMask, int collisionGroup, trace_t& pm );
 
 
-#define BRUSH_ONLY true
+	#define BRUSH_ONLY true
 	virtual unsigned int PlayerSolidMask( bool brushOnly = false );	///< returns the solid mask for the given player, so bots can have a more-restrictive set
+
+	// Fistful of Frags inserts these two transition callbacks before
+	// PlayerMove in CGameMovement's client/server vtable.
+	virtual void	FoFDuckTransition( float duckFraction );
+	virtual void	FoFUnDuckTransition( float duckFraction );
+
 	CBasePlayer		*player;
 	CMoveData *GetMoveData() { return mv; }
 protected:
@@ -108,6 +114,26 @@ protected:
 
 	// Only used by players.  Moves along the ground when player is a MOVETYPE_WALK.
 	virtual void	WalkMove( void );
+
+	// Original FoF CGameMovement slots 26-29. Their placement is ABI
+	// significant: FullWalkMove follows these four entries at slot 30.
+	virtual void	FoFLegacySlideMove( void );
+	virtual void	FoFSlideMove( void );
+	virtual void	FoFHorseSlideMove( void );
+	virtual void	FoFHorseMove( float flForwardScale );
+
+	void			FoFGroundMove( const QAngle &moveAngles, float flForwardMove,
+					float flSideMove, float flWishSpeedCap, float flAcceleration );
+	bool			FoFTryHorseWalkMove( void );
+	void			FoFUpdateSlideState( void );
+	bool			FoFShouldCheckJumpButton( void ) const;
+	bool			FoFTrySlideMove( void );
+	bool			FoFKickBlocksGroundMove( void ) const;
+	void			FoFAdjustLadderLateral(
+					Vector &lateral, const Vector &ladderUp,
+					const Vector &ladderPerpendicular,
+					const Vector &ladderNormalVelocity,
+					const Vector &ladderNormal ) const;
 
 	// Try to keep a walking player on the ground when running down slopes etc
 	void			StayOnGround( void );
@@ -169,7 +195,8 @@ protected:
 	virtual bool	OnLadder( trace_t &trace );
 	virtual float	LadderDistance( void ) const { return 2.0f; }	///< Returns the distance a player can be from a ladder and still attach to it
 	virtual unsigned int LadderMask( void ) const { return MASK_PLAYERSOLID; }
-	virtual float	ClimbSpeed( void ) const { return MAX_CLIMB_SPEED; }
+	// FoF overrides the SDK's 200 u/s ladder default on both sides.
+	virtual float	ClimbSpeed( void ) const;
 	virtual float	LadderLateralMultiplier( void ) const { return 1.0f; }
 
 	// See if the player has a bogus velocity value.

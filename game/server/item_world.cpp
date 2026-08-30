@@ -171,6 +171,23 @@ void CItem::Spawn( void )
 	CollisionProp()->UseTriggerBounds( true, ITEM_PICKUP_BOX_BLOAT );
 	SetTouch(&CItem::ItemTouch);
 
+#if defined( HL2MP )
+	// FoF's fixed whiskey and potion map items deliberately bypass the
+	// ordinary CItem VPhysics object.  Their derived Spawn methods remove the
+	// pickup trigger flag and constrain level-placed instances; creating a
+	// VPhysics body here leaves every bottle interpenetrating nearby world
+	// geometry indefinitely.
+	if ( FClassnameIs( this, "item_whiskey" ) ||
+		FClassnameIs( this, "item_potion" ) )
+	{
+		VPhysicsDestroyObject();
+		m_vOriginalSpawnOrigin = GetAbsOrigin();
+		m_vOriginalSpawnAngles = GetAbsAngles();
+		HL2MPRules()->AddLevelDesignerPlacedObject( this );
+		return;
+	}
+#endif
+
 	if ( CreateItemVPhysicsObject() == false )
 		return;
 

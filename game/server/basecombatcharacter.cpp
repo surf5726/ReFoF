@@ -33,6 +33,7 @@
 #include "world.h"
 #include "globalstate.h"
 #include "items.h"
+#include "fof/fof_player_weapons.h"
 #include "movevars_shared.h"
 #include "RagdollBoogie.h"
 #include "rumble_shared.h"
@@ -103,6 +104,9 @@ BEGIN_DATADESC( CBaseCombatCharacter )
 	DEFINE_AUTO_ARRAY( m_iAmmo, FIELD_INTEGER ),
 	DEFINE_AUTO_ARRAY( m_hMyWeapons, FIELD_EHANDLE ),
 	DEFINE_FIELD( m_hActiveWeapon, FIELD_EHANDLE ),
+#if defined( HL2MP )
+	DEFINE_FIELD( m_hActiveWeapon2, FIELD_EHANDLE ),
+#endif
 	DEFINE_FIELD( m_bForceServerRagdoll, FIELD_BOOLEAN ),
 	DEFINE_FIELD( m_bPreventWeaponPickup, FIELD_BOOLEAN ),
 
@@ -198,6 +202,9 @@ IMPLEMENT_SERVERCLASS_ST(CBaseCombatCharacter, DT_BaseCombatCharacter)
 
 	SendPropEHandle( SENDINFO( m_hActiveWeapon ) ),
 	SendPropArray3( SENDINFO_ARRAY3(m_hMyWeapons), SendPropEHandle( SENDINFO_ARRAY(m_hMyWeapons) ) ),
+#if defined( HL2MP )
+	SendPropEHandle( SENDINFO( m_hActiveWeapon2 ) ),
+#endif
 
 #ifdef INVASION_DLL
 	SendPropInt( SENDINFO(m_iPowerups), MAX_POWERUPS, SPROP_UNSIGNED ), 
@@ -705,6 +712,13 @@ bool CBaseCombatCharacter::HandleInteraction( int interactionType, void *data, C
 //-----------------------------------------------------------------------------
 // Purpose: Constructor : Initialize some fields
 //-----------------------------------------------------------------------------
+#if defined( HL2MP )
+void CBaseCombatCharacter::NetworkStateChanged_m_iAmmo( void *pVar )
+{
+	(void)pVar;
+}
+#endif
+
 CBaseCombatCharacter::CBaseCombatCharacter( void )
 {
 #ifdef _DEBUG
@@ -717,6 +731,7 @@ CBaseCombatCharacter::CBaseCombatCharacter( void )
 
 	// Init weapon and Ammo data
 	m_hActiveWeapon			= NULL;
+	m_hActiveWeapon2		= NULL;
 
 	// reset all ammo values to 0
 	RemoveAllAmmo();
@@ -790,7 +805,7 @@ void CBaseCombatCharacter::Precache()
 
 	PrecacheScriptSound( "BaseCombatCharacter.CorpseGib" );
 	PrecacheScriptSound( "BaseCombatCharacter.StopWeaponSounds" );
-	PrecacheScriptSound( "BaseCombatCharacter.AmmoPickup" );
+	PrecacheScriptSound( "FoF.AmmoPickup" );
 
 	for ( int i = m_Relationship.Count() - 1; i >= 0 ; i--) 
 	{
@@ -1069,6 +1084,12 @@ void CBaseCombatCharacter::Weapon_FrameUpdate( void )
 	if ( m_hActiveWeapon )
 	{
 		m_hActiveWeapon->Operator_FrameUpdate( this );
+	}
+
+	if ( m_hActiveWeapon2 &&
+		m_hActiveWeapon2.Get() != m_hActiveWeapon.Get() )
+	{
+		m_hActiveWeapon2->Operator_FrameUpdate( this );
 	}
 }
 
@@ -1712,6 +1733,8 @@ bool CBaseCombatCharacter::Weapon_Detach( CBaseCombatWeapon *pWeapon )
 
 			if ( pWeapon == m_hActiveWeapon )
 				ClearActiveWeapon();
+			if ( pWeapon == m_hActiveWeapon2 )
+				SetActiveWeapon2( NULL );
 			return true;
 		}
 	}
@@ -2024,12 +2047,6 @@ void CBaseCombatCharacter::Weapon_Drop( CBaseCombatWeapon *pWeapon, const Vector
 		if ( pVelocity )
 		{
 			vecThrow = *pVelocity;
-			float flLen = vecThrow.Length();
-			if (flLen > 400)
-			{
-				VectorNormalize(vecThrow);
-				vecThrow *= 400;
-			}
 		}
 		else
 		{
@@ -2082,6 +2099,7 @@ void CBaseCombatCharacter::Weapon_Equip( CBaseCombatWeapon *pWeapon )
 
 	// Weapon is now on my team
 	pWeapon->ChangeTeam( GetTeamNumber() );
+	pWeapon->SetViewModelIndex( pWeapon->IsSecondGun() ? 1 : 0 );
 
 	// ----------------------
 	//  Give Primary Ammo
@@ -2099,7 +2117,9 @@ void CBaseCombatCharacter::Weapon_Equip( CBaseCombatWeapon *pWeapon )
 		}
 		else
 #endif // HL2_DLL
-		GiveAmmo(pWeapon->GetDefaultClip1(), pWeapon->m_iPrimaryAmmoType); 
+		// The belt's single ammo token is supplied by BumpWeapon.
+		if ( !FClassnameIs( pWeapon, "weapon_dynamite_belt" ) )
+			GiveAmmo(pWeapon->GetDefaultClip1(), pWeapon->m_iPrimaryAmmoType);
 	}
 	// If default ammo given is greater than clip
 	// size, fill clips and give extra ammo
@@ -2280,8 +2300,8 @@ CBaseCombatWeapon *CBaseCombatCharacter::Weapon_GetWpnForAmmo( int iAmmoIndex )
 //-----------------------------------------------------------------------------
 bool CBaseCombatCharacter::Weapon_CanUse( CBaseCombatWeapon *pWeapon )
 {
-	int	actCount = 0;
-	acttable_t *pTable = pWeapon->ActivityList( actCount );
+	const int actCount = pWeapon->ActivityListCount();
+	acttable_t *pTable = pWeapon->ActivityList();
 
 	if( actCount < 1 )
 	{
@@ -2381,12 +2401,6 @@ int CBaseCombatCharacter::OnTakeDamage( const CTakeDamageInfo &info )
 		return 0;
 
 	m_iDamageCount++;
-
-	if ( info.GetDamageType() & DMG_SHOCK )
-	{
-		g_pEffects->Sparks( info.GetDamagePosition(), 2, 2 );
-		UTIL_Smoke( info.GetDamagePosition(), random->RandomInt( 10, 15 ), 10 );
-	}
 
 	// track damage history
 	if ( info.GetAttacker() )
@@ -2984,10 +2998,18 @@ int CBaseCombatCharacter::GiveAmmo( int iCount, int iAmmoIndex, bool bSuppressSo
 	if ( iAdd < 1 )
 		return 0;
 
-	// Ammo pickup sound
-	if ( !bSuppressSound )
+	// FoF uses the ammo family to select the weapon-pickup sound.  Only
+	// players emit it; NPC inventory grants remain silent.
+	if ( !bSuppressSound && IsPlayer() )
 	{
-		EmitSound( "BaseCombatCharacter.AmmoPickup" );
+		const int iKnifeAmmo = GetAmmoDef()->Index( "Knife" );
+		const int iAxeAmmo = GetAmmoDef()->Index( "Axe" );
+		const int iMacheteAmmo = GetAmmoDef()->Index( "Machete" );
+		const char *pszPickupSound =
+			iAmmoIndex == iKnifeAmmo ? "FoFPlayer.KnifePickUp" :
+			( iAmmoIndex == iAxeAmmo || iAmmoIndex == iMacheteAmmo ) ?
+				"FoFPlayer.AxePickUp" : "FoFPlayer.WeaponPickUp";
+		EmitSound( pszPickupSound );
 	}
 
 	m_iAmmo.Set( iAmmoIndex, m_iAmmo[iAmmoIndex] + iAdd );
@@ -3589,4 +3611,3 @@ float CBaseCombatCharacter::GetTimeSinceLastInjury( int team /*= TEAM_ANY */ ) c
 
 	return never;
 }
-

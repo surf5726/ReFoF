@@ -1079,6 +1079,9 @@ public:
 	virtual const Vector &GetViewOffset() const;
 	virtual void		  SetViewOffset( const Vector& v );
 
+	// Gets the velocity this entity imparts to a player standing on it.
+	virtual void		  GetGroundVelocityToApply( Vector &vecGroundVel ) { vecGroundVel = vec3_origin; }
+
 #ifdef SIXENSE
 	const Vector&		GetEyeOffset() const;
 	void				SetEyeOffset( const Vector& v );

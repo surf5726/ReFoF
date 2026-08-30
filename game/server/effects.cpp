@@ -2301,6 +2301,8 @@ void EffectsPrecache( void *pUser )
 
 	CBaseEntity::PrecacheScriptSound( "Physics.WaterSplash" );
 	CBaseEntity::PrecacheScriptSound( "BaseExplosionEffect.Sound" );
+	CBaseEntity::PrecacheScriptSound( "BaseExplosionEffect.SoundLoud" );
+	CBaseEntity::PrecacheScriptSound( "BaseExplosionEffect.SoundYellow" );
 	CBaseEntity::PrecacheScriptSound( "Splash.SplashSound" );
 
 	if ( gpGlobals->maxClients > 1 )

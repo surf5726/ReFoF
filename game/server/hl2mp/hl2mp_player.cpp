@@ -20,6 +20,12 @@
 #include "grenade_satchel.h"
 #include "eventqueue.h"
 #include "gamestats.h"
+#include "fof/fof_player.h"
+#include "fof/fof_player_shared.h"
+#include "hl2mp/hl2mp_playeranimstate.h"
+#include "obstacle_pushaway.h"
+#include "basetempentity.h"
+#include "recipientfilter.h"
 
 #include "engine/IEngineSound.h"
 #include "SoundEmitterSystem/isoundemittersystembase.h"
@@ -32,16 +38,128 @@ int g_iLastCombineModel = 0;
 CBaseEntity	 *g_pLastCombineSpawn = NULL;
 CBaseEntity	 *g_pLastRebelSpawn = NULL;
 extern CBaseEntity				*g_pLastSpawn;
+extern ConVar mp_allowspectators;
 
 #define HL2MP_COMMAND_MAX_RATE 0.3
 
+static const float s_flFoFPlayerPhysicsDamageScale = 4.0f;
+static const float s_flFoFTeamChangeInterval = 1.0f;
+
+#if defined( HL2MP )
+class CTEPlayerAnimEvent : public CBaseTempEntity
+{
+public:
+	DECLARE_CLASS( CTEPlayerAnimEvent, CBaseTempEntity );
+	DECLARE_SERVERCLASS();
+
+	CTEPlayerAnimEvent( const char *pszName ) : CBaseTempEntity( pszName )
+	{
+	}
+
+	CNetworkHandle( CBasePlayer, m_hPlayer );
+	CNetworkVar( int, m_iEvent );
+	CNetworkVar( int, m_nData );
+};
+
+IMPLEMENT_SERVERCLASS_ST_NOBASE( CTEPlayerAnimEvent, DT_TEPlayerAnimEvent )
+	SendPropEHandle( SENDINFO( m_hPlayer ) ),
+	SendPropInt( SENDINFO( m_iEvent ), 6, SPROP_UNSIGNED ),
+	SendPropInt( SENDINFO( m_nData ), 32 ),
+END_SEND_TABLE()
+
+static CTEPlayerAnimEvent g_FoFPlayerAnimEvent( "PlayerAnimEvent" );
+
+void CHL2MP_Player::SendFoFPlayerAnimEvent(
+	PlayerAnimEvent_t event, int nData )
+{
+	CPVSFilter filter( EyePosition() );
+	filter.RemoveRecipient( this );
+
+	g_FoFPlayerAnimEvent.m_hPlayer = this;
+	g_FoFPlayerAnimEvent.m_iEvent = event;
+	g_FoFPlayerAnimEvent.m_nData = nData;
+	g_FoFPlayerAnimEvent.Create( filter, 0.0f );
+}
+
+static void *SendProxy_NonLocalPlayerData(
+	const SendProp *pProp, const void *pStruct, const void *pVarData,
+	CSendProxyRecipients *pRecipients, int objectID )
+{
+	(void)pProp;
+	(void)pStruct;
+	pRecipients->SetAllRecipients();
+	pRecipients->ClearRecipient( objectID - 1 );
+	return const_cast< void * >( pVarData );
+}
+
+bool CHL2MP_Player::ShouldCollide(
+	int nCollisionGroup, int nContentsMask ) const
+{
+	const FoFPlayerCollisionDecision_t nDecision =
+		FoFResolvePlayerTeamCollision(
+			GetTeamNumber(), nCollisionGroup, nContentsMask );
+	if ( nDecision == FOF_PLAYER_COLLISION_ACCEPT )
+		return true;
+	if ( nDecision == FOF_PLAYER_COLLISION_REJECT )
+		return false;
+
+	return CHL2_Player::ShouldCollide( nCollisionGroup, nContentsMask );
+}
+#endif
+
 void DropPrimedFragGrenade( CHL2MP_Player *pPlayer, CBaseCombatWeapon *pGrenade );
 
+#if !defined( HL2MP )
 LINK_ENTITY_TO_CLASS( player, CHL2MP_Player );
+#endif
 
 LINK_ENTITY_TO_CLASS( info_player_combine, CPointEntity );
 LINK_ENTITY_TO_CLASS( info_player_rebel, CPointEntity );
 
+#if defined( HL2MP )
+BEGIN_SEND_TABLE_NOBASE(
+	CHL2MP_Player, DT_HL2MPLocalPlayerExclusive )
+	SendPropVector( SENDINFO( m_vecOrigin ), -1,
+		SPROP_NOSCALE | SPROP_CHANGES_OFTEN ),
+	SendPropFloat( SENDINFO_VECTORELEM( m_angEyeAngles, 0 ), 8,
+		SPROP_CHANGES_OFTEN, -90.0f, 90.0f ),
+END_SEND_TABLE()
+
+BEGIN_SEND_TABLE_NOBASE(
+	CHL2MP_Player, DT_HL2MPNonLocalPlayerExclusive )
+	SendPropVector( SENDINFO( m_vecOrigin ), -1,
+		SPROP_COORD_MP_LOWPRECISION | SPROP_CHANGES_OFTEN ),
+	SendPropFloat( SENDINFO_VECTORELEM( m_angEyeAngles, 0 ), 8,
+		SPROP_CHANGES_OFTEN, -90.0f, 90.0f ),
+	SendPropAngle( SENDINFO_VECTORELEM( m_angEyeAngles, 1 ), 10,
+		SPROP_CHANGES_OFTEN ),
+	SendPropInt( SENDINFO( m_cycleLatch ), 4, SPROP_UNSIGNED ),
+END_SEND_TABLE()
+
+IMPLEMENT_SERVERCLASS_ST( CHL2MP_Player, DT_HL2MP_Player )
+	SendPropExclude( "DT_BaseAnimating", "m_flPoseParameter" ),
+	SendPropExclude( "DT_BaseAnimating", "m_flPlaybackRate" ),
+	SendPropExclude( "DT_BaseAnimating", "m_nSequence" ),
+	SendPropExclude( "DT_BaseEntity", "m_angRotation" ),
+	SendPropExclude( "DT_BaseAnimatingOverlay", "overlay_vars" ),
+	SendPropExclude( "DT_BaseEntity", "m_vecOrigin" ),
+	SendPropExclude( "DT_ServerAnimationData", "m_flCycle" ),
+	SendPropExclude( "DT_AnimTimeMustBeFirst", "m_flAnimTime" ),
+	SendPropExclude( "DT_BaseFlex", "m_flexWeight" ),
+	SendPropExclude( "DT_BaseFlex", "m_blinktoggle" ),
+	SendPropExclude( "DT_BaseFlex", "m_viewtarget" ),
+	SendPropDataTable( "hl2mplocaldata", 0,
+		&REFERENCE_SEND_TABLE( DT_HL2MPLocalPlayerExclusive ),
+		SendProxy_SendLocalDataTable ),
+	SendPropDataTable( "hl2mpnonlocaldata", 0,
+		&REFERENCE_SEND_TABLE( DT_HL2MPNonLocalPlayerExclusive ),
+		SendProxy_NonLocalPlayerData ),
+	SendPropEHandle( SENDINFO( m_hRagdoll ) ),
+	SendPropBool( SENDINFO( m_bSpawnInterpCounter ) ),
+	SendPropInt( SENDINFO( m_iPlayerSoundType ), 3 ),
+	SendPropBool( SENDINFO( m_fIsWalking ) ),
+END_SEND_TABLE()
+#else
 IMPLEMENT_SERVERCLASS_ST(CHL2MP_Player, DT_HL2MP_Player)
 	SendPropAngle( SENDINFO_VECTORELEM(m_angEyeAngles, 0), 11, SPROP_CHANGES_OFTEN ),
 	SendPropAngle( SENDINFO_VECTORELEM(m_angEyeAngles, 1), 11, SPROP_CHANGES_OFTEN ),
@@ -54,10 +172,12 @@ IMPLEMENT_SERVERCLASS_ST(CHL2MP_Player, DT_HL2MP_Player)
 
 //	SendPropExclude( "DT_ServerAnimationData" , "m_flCycle" ),	
 //	SendPropExclude( "DT_AnimTimeMustBeFirst" , "m_flAnimTime" ),
-	
+
 END_SEND_TABLE()
+#endif
 
 BEGIN_DATADESC( CHL2MP_Player )
+	DEFINE_THINKFUNC( HL2MPPushawayThink ),
 END_DATADESC()
 
 const char *g_ppszRandomCitizenModels[] = 
@@ -90,36 +210,55 @@ const char *g_ppszRandomCombineModels[] =
 
 #define MAX_COMBINE_MODELS 4
 #define MODEL_CHANGE_INTERVAL 5.0f
-#define TEAM_CHANGE_INTERVAL 5.0f
-
-#define HL2MPPLAYER_PHYSDAMAGE_SCALE 4.0f
-
 #ifdef _WIN32
 #pragma warning( disable : 4355 )
 #endif
 
-CHL2MP_Player::CHL2MP_Player() : m_PlayerAnimState( this )
+CHL2MP_Player::CHL2MP_Player()
 {
+	m_iPlayerState = STATE_ACTIVE;
+	m_flFoFBaseUnknown12EC = 0.0f;
+	m_bStickRagdoll = false;
+	m_PlayerAnimState = CreateFoFPlayerAnimState( this );
+	UseClientSideAnimation();
 	m_angEyeAngles.Init();
-
 	m_iLastWeaponFireUsercmd = 0;
-
+	m_iModelType = 0;
+	m_iPlayerSoundType = 0;
 	m_flNextModelChangeTime = 0.0f;
 	m_flNextTeamChangeTime = 0.0f;
-
-	m_iSpawnInterpCounter = 0;
-
-    m_bEnterObserver = false;
+	m_bSpawnInterpCounter = false;
+	m_pCurStateInfo = NULL;
+	m_flSlamProtectTime = 0.0f;
+	m_bEnterObserver = false;
 	m_bReady = false;
-
-	BaseClass::ChangeTeam( 0 );
-	
-//	UseClientSideAnimation();
+	m_cycleLatch = 0;
+	m_cycleLatchTimer.Invalidate();
 }
 
 CHL2MP_Player::~CHL2MP_Player( void )
 {
+	if ( m_PlayerAnimState )
+	{
+		m_PlayerAnimState->Release();
+		m_PlayerAnimState = NULL;
+	}
+}
 
+void CHL2MP_Player::Precache( void )
+{
+	CHL2_Player::Precache();
+	CBaseEntity::PrecacheModel( "sprites/glow01.vmt", true );
+}
+
+CHL2MPPlayerAnimState *CHL2MP_Player::GetFoFPlayerAnimState( void ) const
+{
+	return m_PlayerAnimState;
+}
+
+int CHL2MP_Player::GetFoFModelType( void ) const
+{
+	return m_iModelType;
 }
 
 void CHL2MP_Player::UpdateOnRemove( void )
@@ -131,32 +270,6 @@ void CHL2MP_Player::UpdateOnRemove( void )
 	}
 
 	BaseClass::UpdateOnRemove();
-}
-
-void CHL2MP_Player::Precache( void )
-{
-	BaseClass::Precache();
-
-	PrecacheModel ( "sprites/glow01.vmt" );
-
-	//Precache Citizen models
-	int nHeads = ARRAYSIZE( g_ppszRandomCitizenModels );
-	int i;	
-
-	for ( i = 0; i < nHeads; ++i )
-	   	 PrecacheModel( g_ppszRandomCitizenModels[i] );
-
-	//Precache Combine Models
-	nHeads = ARRAYSIZE( g_ppszRandomCombineModels );
-
-	for ( i = 0; i < nHeads; ++i )
-	   	 PrecacheModel( g_ppszRandomCombineModels[i] );
-
-	PrecacheFootStepSounds();
-
-	PrecacheScriptSound( "NPC_MetroPolice.Die" );
-	PrecacheScriptSound( "NPC_CombineS.Die" );
-	PrecacheScriptSound( "NPC_Citizen.die" );
 }
 
 void CHL2MP_Player::GiveAllItems( void )
@@ -284,55 +397,45 @@ void CHL2MP_Player::PickDefaultSpawnTeam( void )
 	}
 }
 
-//-----------------------------------------------------------------------------
-// Purpose: Sets HL2 specific defaults.
-//-----------------------------------------------------------------------------
 void CHL2MP_Player::Spawn(void)
 {
 	m_flNextModelChangeTime = 0.0f;
 	m_flNextTeamChangeTime = 0.0f;
+	SetNumAnimOverlays( GESTURE_SLOT_COUNT );
+	CHL2_Player::Spawn();
 
-	PickDefaultSpawnTeam();
-
-	BaseClass::Spawn();
-	
 	if ( !IsObserver() )
 	{
 		pl.deadflag = false;
 		RemoveSolidFlags( FSOLID_NOT_SOLID );
-
 		RemoveEffects( EF_NODRAW );
-		
-		GiveDefaultItems();
 	}
 
-	SetNumAnimOverlays( 3 );
-	ResetAnimation();
-
+	SetNumAnimOverlays( GESTURE_SLOT_COUNT );
 	m_nRenderFX = kRenderNormal;
-
 	m_Local.m_iHideHUD = 0;
-	
-	AddFlag(FL_ONGROUND); // set the player on the ground at the start of the round.
-
-	m_impactEnergyScale = HL2MPPLAYER_PHYSDAMAGE_SCALE;
+	AddFlag( FL_ONGROUND );
+	m_impactEnergyScale = s_flFoFPlayerPhysicsDamageScale;
 
 	if ( HL2MPRules()->IsIntermission() )
-	{
 		AddFlag( FL_FROZEN );
-	}
 	else
-	{
 		RemoveFlag( FL_FROZEN );
-	}
 
-	m_iSpawnInterpCounter = (m_iSpawnInterpCounter + 1) % 8;
-
+	m_bStickRagdoll = false;
+	m_bSpawnInterpCounter = !m_bSpawnInterpCounter;
 	m_Local.m_bDucked = false;
-
-	SetPlayerUnderwater(false);
-
+	SetPlayerUnderwater( false );
 	m_bReady = false;
+	m_cycleLatchTimer.Start( 0.2f );
+	if ( m_PlayerAnimState )
+		m_PlayerAnimState->DoAnimationEvent(
+			PLAYERANIMEVENT_SPAWN, 0 );
+	SendFoFPlayerAnimEvent( PLAYERANIMEVENT_SPAWN, 0 );
+	SetContextThink(
+		&CHL2MP_Player::HL2MPPushawayThink,
+		gpGlobals->curtime + 0.05f,
+		"HL2MPPushawayThink" );
 }
 
 void CHL2MP_Player::PickupObject( CBaseEntity *pObject, bool bLimitMassAndSize )
@@ -523,6 +626,19 @@ void CHL2MP_Player::ResetAnimation( void )
 	}
 }
 
+void CHL2MP_Player::HL2MPPushawayThink( void )
+{
+	PerformObstaclePushaway( this );
+	SetNextThink(
+		gpGlobals->curtime + 0.05f, "HL2MPPushawayThink" );
+}
+
+void CHL2MP_Player::SetAnimation( PLAYER_ANIM playerAnim )
+{
+	// FoF drives player animation through the multiplayer animation state.
+	(void)playerAnim;
+}
+
 
 bool CHL2MP_Player::Weapon_Switch( CBaseCombatWeapon *pWeapon, int viewmodelindex )
 {
@@ -536,45 +652,36 @@ bool CHL2MP_Player::Weapon_Switch( CBaseCombatWeapon *pWeapon, int viewmodelinde
 	return bRet;
 }
 
-void CHL2MP_Player::PreThink( void )
-{
-	QAngle vOldAngles = GetLocalAngles();
-	QAngle vTempAngles = GetLocalAngles();
-
-	vTempAngles = EyeAngles();
-
-	if ( vTempAngles[PITCH] > 180.0f )
-	{
-		vTempAngles[PITCH] -= 360.0f;
-	}
-
-	SetLocalAngles( vTempAngles );
-
-	BaseClass::PreThink();
-	State_PreThink();
-
-	//Reset bullet force accumulator, only lasts one frame
-	m_vecTotalBulletForce = vec3_origin;
-	SetLocalAngles( vOldAngles );
-}
-
 void CHL2MP_Player::PostThink( void )
 {
-	BaseClass::PostThink();
-	
+	CHL2_Player::PostThink();
+
 	if ( GetFlags() & FL_DUCKING )
-	{
 		SetCollisionBounds( VEC_CROUCH_TRACE_MIN, VEC_CROUCH_TRACE_MAX );
+
+	QAngle localAngles = GetLocalAngles();
+	localAngles[PITCH] = 0.0f;
+	SetLocalAngles( localAngles );
+
+	m_angEyeAngles = EyeAngles();
+	if ( m_PlayerAnimState )
+	{
+		m_PlayerAnimState->Update(
+			m_angEyeAngles[YAW], m_angEyeAngles[PITCH] );
 	}
 
-	m_PlayerAnimState.Update();
+	if ( IsAlive() && m_cycleLatchTimer.IsElapsed() )
+	{
+		m_cycleLatchTimer.Start( 0.2f );
+		m_cycleLatch = static_cast< int >( GetCycle() * 16.0f );
+	}
+}
 
-	// Store the eye angles pitch so the client can compute its animation state correctly.
-	m_angEyeAngles = EyeAngles();
-
-	QAngle angles = GetLocalAngles();
-	angles[PITCH] = 0;
-	SetLocalAngles( angles );
+void CHL2MP_Player::PreThink( void )
+{
+	CHL2_Player::PreThink();
+	State_PreThink();
+	m_vecTotalBulletForce = vec3_origin;
 }
 
 void CHL2MP_Player::PlayerDeathThink()
@@ -592,11 +699,14 @@ void CHL2MP_Player::FireBullets ( const FireBulletsInfo_t &info )
 
 	FireBulletsInfo_t modinfo = info;
 
-	CWeaponHL2MPBase *pWeapon = dynamic_cast<CWeaponHL2MPBase *>( GetActiveWeapon() );
-
-	if ( pWeapon )
+	CWeaponHL2MPBase *pWeapon =
+		dynamic_cast< CWeaponHL2MPBase * >( GetActiveWeapon() );
+	if ( pWeapon && modinfo.m_iPlayerDamage == 0 &&
+		modinfo.m_flDamage == 0.0f )
 	{
-		modinfo.m_iPlayerDamage = modinfo.m_flDamage = pWeapon->GetHL2MPWpnData().m_iPlayerDamage;
+		modinfo.m_iPlayerDamage = modinfo.m_flDamage =
+			static_cast< const CHL2MPSWeaponInfo & >(
+				pWeapon->GetWpnData() ).m_iPlayerDamage;
 	}
 
 	NoteWeaponFired();
@@ -673,170 +783,6 @@ Activity CHL2MP_Player::TranslateTeamActivity( Activity ActToTranslate )
 
 extern ConVar hl2_normspeed;
 
-// Set the activity based on an event or current state
-void CHL2MP_Player::SetAnimation( PLAYER_ANIM playerAnim )
-{
-	int animDesired;
-
-	float speed;
-
-	speed = GetAbsVelocity().Length2D();
-
-	
-	// bool bRunning = true;
-
-	//Revisit!
-/*	if ( ( m_nButtons & ( IN_FORWARD | IN_BACK | IN_MOVELEFT | IN_MOVERIGHT ) ) )
-	{
-		if ( speed > 1.0f && speed < hl2_normspeed.GetFloat() - 20.0f )
-		{
-			bRunning = false;
-		}
-	}*/
-
-	if ( GetFlags() & ( FL_FROZEN | FL_ATCONTROLS ) )
-	{
-		speed = 0;
-		playerAnim = PLAYER_IDLE;
-	}
-
-	Activity idealActivity = ACT_HL2MP_RUN;
-
-	// This could stand to be redone. Why is playerAnim abstracted from activity? (sjb)
-	if ( playerAnim == PLAYER_JUMP )
-	{
-		idealActivity = ACT_HL2MP_JUMP;
-	}
-	else if ( playerAnim == PLAYER_DIE )
-	{
-		if ( m_lifeState == LIFE_ALIVE )
-		{
-			return;
-		}
-	}
-	else if ( playerAnim == PLAYER_ATTACK1 )
-	{
-		if ( GetActivity( ) == ACT_HOVER	|| 
-			 GetActivity( ) == ACT_SWIM		||
-			 GetActivity( ) == ACT_HOP		||
-			 GetActivity( ) == ACT_LEAP		||
-			 GetActivity( ) == ACT_DIESIMPLE )
-		{
-			idealActivity = GetActivity( );
-		}
-		else
-		{
-			idealActivity = ACT_HL2MP_GESTURE_RANGE_ATTACK;
-		}
-	}
-	else if ( playerAnim == PLAYER_RELOAD )
-	{
-		idealActivity = ACT_HL2MP_GESTURE_RELOAD;
-	}
-	else if ( playerAnim == PLAYER_IDLE || playerAnim == PLAYER_WALK )
-	{
-		if ( !( GetFlags() & FL_ONGROUND ) && GetActivity( ) == ACT_HL2MP_JUMP )	// Still jumping
-		{
-			idealActivity = GetActivity( );
-		}
-		/*
-		else if ( GetWaterLevel() > 1 )
-		{
-			if ( speed == 0 )
-				idealActivity = ACT_HOVER;
-			else
-				idealActivity = ACT_SWIM;
-		}
-		*/
-		else
-		{
-			if ( GetFlags() & FL_DUCKING )
-			{
-				if ( speed > 0 )
-				{
-					idealActivity = ACT_HL2MP_WALK_CROUCH;
-				}
-				else
-				{
-					idealActivity = ACT_HL2MP_IDLE_CROUCH;
-				}
-			}
-			else
-			{
-				if ( speed > 0 )
-				{
-					/*
-					if ( bRunning == false )
-					{
-						idealActivity = ACT_WALK;
-					}
-					else
-					*/
-					{
-						idealActivity = ACT_HL2MP_RUN;
-					}
-				}
-				else
-				{
-					idealActivity = ACT_HL2MP_IDLE;
-				}
-			}
-		}
-
-		idealActivity = TranslateTeamActivity( idealActivity );
-	}
-	
-	if ( idealActivity == ACT_HL2MP_GESTURE_RANGE_ATTACK )
-	{
-		RestartGesture( Weapon_TranslateActivity( idealActivity ) );
-
-		// FIXME: this seems a bit wacked
-		Weapon_SetActivity( Weapon_TranslateActivity( ACT_RANGE_ATTACK1 ), 0 );
-
-		return;
-	}
-	else if ( idealActivity == ACT_HL2MP_GESTURE_RELOAD )
-	{
-		RestartGesture( Weapon_TranslateActivity( idealActivity ) );
-		return;
-	}
-	else
-	{
-		SetActivity( idealActivity );
-
-		animDesired = SelectWeightedSequence( Weapon_TranslateActivity ( idealActivity ) );
-
-		if (animDesired == -1)
-		{
-			animDesired = SelectWeightedSequence( idealActivity );
-
-			if ( animDesired == -1 )
-			{
-				animDesired = 0;
-			}
-		}
-	
-		// Already using the desired animation?
-		if ( GetSequence() == animDesired )
-			return;
-
-		m_flPlaybackRate = 1.0;
-		ResetSequence( animDesired );
-		SetCycle( 0 );
-		return;
-	}
-
-	// Already using the desired animation?
-	if ( GetSequence() == animDesired )
-		return;
-
-	//Msg( "Set animation to %d\n", animDesired );
-	// Reset to first frame of desired animation
-	ResetSequence( animDesired );
-	SetCycle( 0 );
-}
-
-
 extern int	gEvilImpulse101;
 //-----------------------------------------------------------------------------
 // Purpose: Player reacts to bumping a weapon. 
@@ -892,97 +838,60 @@ bool CHL2MP_Player::BumpWeapon( CBaseCombatWeapon *pWeapon )
 
 void CHL2MP_Player::ChangeTeam( int iTeam )
 {
-/*	if ( GetNextTeamChangeTime() >= gpGlobals->curtime )
-	{
-		char szReturnString[128];
-		Q_snprintf( szReturnString, sizeof( szReturnString ), "Please wait %d more seconds before trying to switch teams again.\n", (int)(GetNextTeamChangeTime() - gpGlobals->curtime) );
+	CBasePlayer::ChangeTeam( iTeam );
+}
 
-		ClientPrint( this, HUD_PRINTTALK, szReturnString );
-		return;
-	}*/
-
-	bool bKill = false;
-
-	if ( HL2MPRules()->IsTeamplay() != true && iTeam != TEAM_SPECTATOR )
-	{
-		//don't let them try to join combine or rebels during deathmatch.
+void CHL2MP_Player::ChangeTeam( int iTeam, bool bDontKill,
+	bool bAutoTeam, bool bSilent )
+{
+	if ( !HL2MPRules()->IsTeamplay() && iTeam != TEAM_SPECTATOR )
 		iTeam = TEAM_UNASSIGNED;
-	}
 
-	if ( HL2MPRules()->IsTeamplay() == true )
-	{
-		if ( iTeam != GetTeamNumber() && GetTeamNumber() != TEAM_UNASSIGNED )
-		{
-			bKill = true;
-		}
-	}
-
-	BaseClass::ChangeTeam( iTeam );
-
-	m_flNextTeamChangeTime = gpGlobals->curtime + TEAM_CHANGE_INTERVAL;
-
-	if ( HL2MPRules()->IsTeamplay() == true )
-	{
-		SetPlayerTeamModel();
-	}
-	else
-	{
-		SetPlayerModel();
-	}
+	const bool bKill = iTeam != GetTeamNumber() && !bDontKill;
+	CBasePlayer::ChangeTeam( iTeam, bAutoTeam, bSilent );
+	m_flNextTeamChangeTime =
+		gpGlobals->curtime + s_flFoFTeamChangeInterval;
 
 	if ( iTeam == TEAM_SPECTATOR )
 	{
 		RemoveAllItems( true );
-
 		State_Transition( STATE_OBSERVER_MODE );
 	}
 
-	if ( bKill == true )
-	{
+	if ( bKill )
 		CommitSuicide();
-	}
 }
 
 bool CHL2MP_Player::HandleCommand_JoinTeam( int team )
 {
-	if ( !GetGlobalTeam( team ) || team == 0 )
+	if ( !GetGlobalTeam( team ) || team == TEAM_UNASSIGNED )
 	{
 		Warning( "HandleCommand_JoinTeam( %d ) - invalid team index.\n", team );
 		return false;
 	}
 
-	if ( team == TEAM_SPECTATOR )
-	{
-		// Prevent this is the cvar is set
-		if ( !mp_allowspectators.GetInt() )
-		{
-			ClientPrint( this, HUD_PRINTCENTER, "#Cannot_Be_Spectator" );
-			return false;
-		}
-
-		if ( GetTeamNumber() != TEAM_UNASSIGNED && !IsDead() )
-		{
-			m_fNextSuicideTime = gpGlobals->curtime;	// allow the suicide to work
-
-			CommitSuicide();
-
-			// add 1 to frags to balance out the 1 subtracted for killing yourself
-			IncrementFragCount( 1 );
-		}
-
-		ChangeTeam( TEAM_SPECTATOR );
-
-		return true;
-	}
-	else
+	if ( team != TEAM_SPECTATOR )
 	{
 		StopObserverMode();
-		State_Transition(STATE_ACTIVE);
+		State_Transition( STATE_ACTIVE );
+		ChangeTeam( team, false, false, false );
+		return true;
 	}
 
-	// Switch their actual team...
-	ChangeTeam( team );
+	if ( !mp_allowspectators.GetBool() )
+	{
+		ClientPrint( this, HUD_PRINTCENTER, "#Cannot_Be_Spectator" );
+		return false;
+	}
 
+	if ( GetTeamNumber() != TEAM_UNASSIGNED && !IsDead() )
+	{
+		m_fNextSuicideTime = gpGlobals->curtime;
+		CommitSuicide();
+		IncrementFragCount( 1 );
+	}
+
+	ChangeTeam( TEAM_SPECTATOR, false, false, false );
 	return true;
 }
 
@@ -1085,27 +994,6 @@ bool CHL2MP_Player::BecomeRagdollOnClient( const Vector &force )
 // Ragdoll entities.
 // -------------------------------------------------------------------------------- //
 
-class CHL2MPRagdoll : public CBaseAnimatingOverlay
-{
-public:
-	DECLARE_CLASS( CHL2MPRagdoll, CBaseAnimatingOverlay );
-	DECLARE_SERVERCLASS();
-
-	// Transmit ragdolls to everyone.
-	virtual int UpdateTransmitState()
-	{
-		return SetTransmitState( FL_EDICT_ALWAYS );
-	}
-
-public:
-	// In case the client has the player entity, we transmit the player index.
-	// In case the client doesn't have it, we transmit the player's model index, origin, and angles
-	// so they can create a ragdoll in the right place.
-	CNetworkHandle( CBaseEntity, m_hPlayer );	// networked entity handle 
-	CNetworkVector( m_vecRagdollVelocity );
-	CNetworkVector( m_vecRagdollOrigin );
-};
-
 LINK_ENTITY_TO_CLASS( hl2mp_ragdoll, CHL2MPRagdoll );
 
 IMPLEMENT_SERVERCLASS_ST_NOBASE( CHL2MPRagdoll, DT_HL2MPRagdoll )
@@ -1114,10 +1002,13 @@ IMPLEMENT_SERVERCLASS_ST_NOBASE( CHL2MPRagdoll, DT_HL2MPRagdoll )
 	SendPropModelIndex( SENDINFO( m_nModelIndex ) ),
 	SendPropInt		( SENDINFO(m_nForceBone), 8, 0 ),
 	SendPropVector	( SENDINFO(m_vecForce), -1, SPROP_NOSCALE ),
+#if defined( HL2MP )
+	SendPropBool( SENDINFO( m_bStickRagdoll ) ),
+#endif
 	SendPropVector( SENDINFO( m_vecRagdollVelocity ) )
 END_SEND_TABLE()
 
-
+#if !defined( HL2MP )
 void CHL2MP_Player::CreateRagdollEntity( void )
 {
 	if ( m_hRagdoll )
@@ -1149,6 +1040,32 @@ void CHL2MP_Player::CreateRagdollEntity( void )
 	// ragdolls will be removed on round restart automatically
 	m_hRagdoll = pRagdoll;
 }
+#else
+void CHL2MP_Player::CreateRagdollEntity( void )
+{
+	if ( m_hRagdoll )
+	{
+		UTIL_RemoveImmediate( m_hRagdoll );
+		m_hRagdoll = NULL;
+	}
+
+	CHL2MPRagdoll *pRagdoll = dynamic_cast< CHL2MPRagdoll * >(
+		CreateEntityByName( "hl2mp_ragdoll" ) );
+	if ( pRagdoll )
+	{
+		pRagdoll->m_hPlayer = this;
+		pRagdoll->m_vecRagdollOrigin = GetAbsOrigin();
+		pRagdoll->m_vecRagdollVelocity = GetAbsVelocity();
+		pRagdoll->m_nModelIndex = m_nModelIndex;
+		pRagdoll->m_nForceBone = m_nForceBone;
+		pRagdoll->m_vecForce = m_vecTotalBulletForce;
+		pRagdoll->m_bStickRagdoll = m_bStickRagdoll;
+		pRagdoll->SetAbsOrigin( GetAbsOrigin() );
+	}
+
+	m_hRagdoll = pRagdoll;
+}
+#endif
 
 //-----------------------------------------------------------------------------
 //-----------------------------------------------------------------------------
@@ -1221,6 +1138,7 @@ void CHL2MP_Player::DetonateTripmines( void )
 	EmitSound( "Weapon_SLAM.SatchelDetonate" );
 }
 
+#if !defined( HL2MP )
 void CHL2MP_Player::Event_Killed( const CTakeDamageInfo &info )
 {
 	//update damage info with our accumulated physics force
@@ -1266,6 +1184,39 @@ void CHL2MP_Player::Event_Killed( const CTakeDamageInfo &info )
 	RemoveEffects( EF_NODRAW );	// still draw player body
 	StopZooming();
 }
+#else
+void CHL2MP_Player::Event_Killed( const CTakeDamageInfo &info )
+{
+	m_bStickRagdoll = info.GetDamageCustom() == 12;
+	CTakeDamageInfo subinfo = info;
+	subinfo.SetDamageForce( m_vecTotalBulletForce );
+	// Keep FoF's seven multiplayer gesture layers alive through death. Shrinking
+	// the overlay vector invalidates the cached layers used by PostThink.
+	CreateRagdollEntity();
+	CHL2_Player::Event_Killed( subinfo );
+
+	if ( ( info.GetDamageType() & DMG_DISSOLVE ) && m_hRagdoll )
+	{
+		m_hRagdoll->GetBaseAnimating()->Dissolve(
+			NULL, gpGlobals->curtime, false, ENTITY_DISSOLVE_NORMAL );
+	}
+
+	CBaseEntity *pAttacker = info.GetAttacker();
+	static ConVarRef currentMode( "fof_sv_currentmode", true );
+	// Elimination uses the team score for round victories, not kills.
+	if ( pAttacker &&
+		( !currentMode.IsValid() || currentMode.GetInt() != 4 ) )
+	{
+		GetGlobalTeam( pAttacker->GetTeamNumber() )->AddScore(
+			pAttacker == this ? -1 : 1 );
+	}
+
+	FlashlightTurnOff();
+	m_lifeState = LIFE_DEAD;
+	RemoveEffects( EF_NODRAW );
+	StopZooming();
+}
+#endif
 
 int CHL2MP_Player::OnTakeDamage( const CTakeDamageInfo &inputInfo )
 {

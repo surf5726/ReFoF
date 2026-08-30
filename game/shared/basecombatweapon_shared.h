@@ -39,6 +39,9 @@ class CBasePlayer;
 class CBaseCombatCharacter;
 class IPhysicsConstraint;
 class CUserCmd;
+#if defined( CLIENT_DLL )
+class CGlowObject;
+#endif
 
 // How many times to display altfire hud hints (per weapon)
 #define WEAPON_ALTFIRE_HUD_HINT_COUNT	1
@@ -55,7 +58,8 @@ class CUserCmd;
 // Put this in your derived class definition to declare it's activity table
 // UNDONE: Cascade these?
 #define DECLARE_ACTTABLE()		static acttable_t m_acttable[];\
-	virtual acttable_t *ActivityList( int &iActivityCount ) OVERRIDE;
+	virtual acttable_t *ActivityList( void ) OVERRIDE;\
+	virtual int ActivityListCount( void ) OVERRIDE;
 
 // You also need to include the activity table itself in your class' implementation:
 // e.g.
@@ -72,7 +76,8 @@ class CUserCmd;
 // activity table.
 // UNDONE: Cascade these?
 #define IMPLEMENT_ACTTABLE(className) \
-	acttable_t *className::ActivityList( int &iActivityCount ) { iActivityCount = ARRAYSIZE(m_acttable); return m_acttable; }
+	acttable_t *className::ActivityList( void ) { return m_acttable; } \
+	int className::ActivityListCount( void ) { return ARRAYSIZE(m_acttable); }
 
 typedef struct
 {
@@ -384,10 +389,23 @@ public:
 	// derive this function if you mod uses encrypted weapon info files
 	virtual const unsigned char *GetEncryptionKey( void );
 
-	virtual int				GetPrimaryAmmoType( void )  const { return m_iPrimaryAmmoType; }
-	virtual int				GetSecondaryAmmoType( void )  const { return m_iSecondaryAmmoType; }
+#if defined( CLIENT_DLL )
+	int					GetPrimaryAmmoType( void ) const { return m_iPrimaryAmmoType; }
+	int					GetSecondaryAmmoType( void ) const { return m_iSecondaryAmmoType; }
+#else
+	virtual int				GetPrimaryAmmoType( void ) const { return m_iPrimaryAmmoType; }
+	virtual int				GetSecondaryAmmoType( void ) const { return m_iSecondaryAmmoType; }
+#endif
+#if defined( CLIENT_DLL )
+	// The shipped FoF client exposes these two queries through the weapon
+	// vtable.  Its server does not; making them virtual on the server shifts
+	// every FoF weapon virtual that follows.
 	virtual int				Clip1() { return m_iClip1; }
 	virtual int				Clip2() { return m_iClip2; }
+#else
+	int					Clip1() { return m_iClip1; }
+	int					Clip2() { return m_iClip2; }
+#endif
 
 	// Ammo quantity queries for weapons that do not use clips. These are only
 	// used to determine how much ammo is in a weapon that does not have an owner.
@@ -408,12 +426,25 @@ public:
 	virtual CHudTexture const	*GetSpriteZoomedAutoaim( void ) const;
 
 	virtual Activity		ActivityOverride( Activity baseAct, bool *pRequired );
-	virtual	acttable_t*		ActivityList( int &iActivityCount ) { return NULL; }
+
+	// FoF expanded the single SDK activity-table accessor into three table
+	// pointers followed by their three counts.  Keep this exact order: these
+	// are primary-vtable slots 341..346 on the server (331..336 client-side).
+	virtual acttable_t		*ActivityList( void ) { return NULL; }
+	virtual acttable_t		*ActivityListAlternate( void ) { return NULL; }
+	virtual acttable_t		*ActivityListThird( void ) { return NULL; }
+	virtual int				ActivityListCount( void ) { return 0; }
+	virtual int				ActivityListAlternateCount( void ) { return 0; }
+	virtual int				ActivityListThirdCount( void ) { return 0; }
 
 	virtual void			PoseParameterOverride( bool bReset );
 	virtual poseparamtable_t* PoseParamList( int &iPoseParamCount ) { return NULL; }
 
 	virtual void			Activate( void );
+#if !defined( CLIENT_DLL )
+	void					SendFoFWorldGlow();
+	void					ClearFoFWorldGlow();
+#endif
 
 	virtual bool ShouldUseLargeViewModelVROverride() { return false; }
 public:
@@ -445,7 +476,12 @@ public:
 
 	bool					IsRemoveable() { return m_bRemoveable; }
 	void					SetRemoveable( bool bRemoveable ) { m_bRemoveable = bRemoveable; }
-	
+#if !defined( CLIENT_DLL )
+	int						GetFoFShotCounter() const { return m_iFoFShotCounter; }
+	void					SetFoFShotCounter( int nCounter ) { m_iFoFShotCounter = nCounter; }
+	void					AddFoFShotCounter( int nAmount ) { m_iFoFShotCounter += nAmount; }
+#endif
+
 	// Returns bits for	weapon conditions
 	virtual bool			WeaponLOSCondition( const Vector &ownerPos, const Vector &targetPos, bool bSetConditions );	
 	virtual	int				WeaponRangeAttack1Condition( float flDot, float flDist );
@@ -485,6 +521,7 @@ public:
 	virtual ShadowType_t	ShadowCastType();
 	virtual void			SetDormant( bool bDormant );
 	virtual void			OnDataChanged( DataUpdateType_t updateType );
+	virtual void			DoAnimationEvents( CStudioHdr *pStudioHdr );
 	virtual void			OnRestore();
 
 	virtual void			RestartParticleEffect( void ) {}
@@ -501,6 +538,14 @@ public:
 	virtual bool			IsCarriedByLocalPlayer( void );
 	virtual bool			ShouldDrawUsingViewModel( void );
 	virtual bool			IsActiveByLocalPlayer( void );
+
+#if defined( CLIENT_DLL )
+	// FoF appends these three glow operations immediately after the local
+	// weapon-state helpers. Their implementation lives under shared/fof.
+	virtual void			CreateAmmoGlowEffect( int nAmmo );
+	virtual void			CreateGlowEffect( int nType );
+	virtual void			DestroyGlowEffect();
+#endif
 
 	bool					IsBeingCarried() const;
 
@@ -519,6 +564,9 @@ public:
 	virtual void			GetViewmodelBoneControllers(C_BaseViewModel *pViewModel, float controllers[MAXSTUDIOBONECTRLS]) { return; }
 
 	virtual void			NotifyShouldTransmit( ShouldTransmitState_t state );
+#if defined( CLIENT_DLL )
+	virtual void			ReceiveMessage( int classID, bf_read &msg );
+#endif
 	WEAPON_FILE_INFO_HANDLE	GetWeaponFileInfoHandle() { return m_hWeaponFileInfo; }
 
 	virtual int				GetWorldModelIndex( void );
@@ -545,8 +593,33 @@ public:
 	virtual void			HideThink( void );
 	virtual bool			CanReload( void );
 
+#if defined( CLIENT_DLL )
+	IMPLEMENT_NETWORK_VAR_FOR_DERIVED( m_nNextThinkTick );
+#endif
+
+	// FoF weapon ABI, server slots 371..381.  The neutral defaults and order
+	// below are recovered directly from the shipped FoF DLL.  Class
+	// overrides are kept in shared weapon code so client prediction and the
+	// authoritative server execute the same properties.
+	virtual bool			CanDualWield( void ) const;
+	virtual bool			IsSecondGun( void ) const;
+	virtual bool			CanFan( void ) const;
+	virtual int				FoFWeaponWeight( void ) const;
+	virtual float			FoFSightExpandRate( void ) const;
+	virtual float			FoFSightContractRate( void ) const;
+	virtual int				FoFWeaponID( void ) const;
+	virtual float			FoFProperty378( void ) const;
+	virtual bool			FoFUsesScope( void ) const;
+	virtual int				FoFZoomFOV( void ) const;
+	virtual float			FoFSightMoveEndpoint( void ) const;
+
 private:
 	typedef CHandle< CBaseCombatCharacter > CBaseCombatCharacterHandle;
+#if defined( CLIENT_DLL )
+	// FoF stores this directly before m_hOwner.  Keeping the recovered
+	// placement also restores the missing client weapon-base layout word.
+	CGlowObject			*m_pGlowEffect;
+#endif
 	CNetworkVar( CBaseCombatCharacterHandle, m_hOwner );				// Player carrying this weapon
 
 protected:
@@ -598,7 +671,9 @@ private:
 
 public:
 
+#if !defined( CLIENT_DLL )
 	IMPLEMENT_NETWORK_VAR_FOR_DERIVED( m_nNextThinkTick );
+#endif
 
 #ifdef CLIENT_DLL
 	static void				RecvProxy_WeaponState( const CRecvProxyData *pData, void *pStruct, void *pOut );
@@ -648,7 +723,14 @@ protected:
 	COutputEvent			m_OnPlayerUse;		// Fired when the player uses the weapon.
 	COutputEvent			m_OnPlayerPickup;	// Fired when the player picks up the weapon.
 	COutputEvent			m_OnNPCPickup;		// Fired when an NPC picks up the weapon.
-	COutputEvent			m_OnCacheInteraction;	// For awarding lambda cache achievements in HL2 on 360. See .FGD file for details 
+	COutputEvent			m_OnCacheInteraction;	// For awarding lambda cache achievements in HL2 on 360. See .FGD file for details
+
+	// FoF keeps weapon pickup state and wear in CBaseCombatWeapon.
+	// m_iSubType remains Source's inventory discriminator and must never carry
+	// FoF's wear value, otherwise SelectItem cannot find a picked-up weapon.
+	bool					m_bFoFWeaponState;
+	float					m_flFoFWeaponStateTime;
+	int						m_iFoFShotCounter;
 
 #else // Client .dll only
 	bool					m_bJustRestored;

@@ -22,6 +22,8 @@
 #include "vgui/ISurface.h"
 #include "client_textmessage.h"
 #include "VGuiMatSurface/IMatSystemSurface.h"
+#include "fof/fof_hud_transient.h"
+#include "fof/fof_hud.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -449,11 +451,12 @@ void CHudMessage::MessageScanStart( void )
 
 	m_parms.font = g_hFontTrebuchet24;
 
-	if ( m_parms.vguiFontName != NULL && 
-		m_parms.vguiFontName[ 0 ] )
+	vgui::HFont hFoFFont = FoFHudMessageFont(
+		m_parms.pMessage, m_parms.vguiFontName );
+	if ( hFoFFont != vgui::INVALID_FONT )
 	{
-
-		SetFont( vgui::scheme()->GetDefaultScheme(), m_parms.vguiFontName );
+		textmessage->SetFont( hFoFFont );
+		m_parms.font = hFoFFont;
 	}
 }
 
@@ -498,6 +501,10 @@ void CHudMessage::MessageDrawScan( client_textmessage_t *pMessage, float time )
 	m_parms.vguiFontName = pMessage->pVGuiSchemeFontName;
 
 	m_parms.font = g_hFontTrebuchet24;
+	vgui::HFont hFoFFont = FoFHudMessageFont(
+		pMessage, pMessage->pVGuiSchemeFontName );
+	if ( hFoFFont != vgui::INVALID_FONT )
+		m_parms.font = hFoFFont;
 
 	while ( *pText )
 	{
@@ -609,6 +616,12 @@ bool CHudMessage::ShouldDraw( void )
 //-----------------------------------------------------------------------------
 void CHudMessage::Paint()
 {
+	// HudMsg can force this panel visible after CHud::Think has applied the
+	// global HUD switch. Keep the draw path closed as well so repeatedly
+	// refreshed messages such as WARM-UP cannot flash for one frame.
+	if ( !FoFHudShouldDraw() )
+		return;
+
 	int i, drawn;
 	client_textmessage_t *pMessage;
 	float endTime;
@@ -766,7 +779,7 @@ void CHudMessage::MessageAdd( const char *pName )
 
 	m_bHaveMessage = true;
 	// Force this now so that SCR_UpdateScreen will paint the panel immediately!!!
-	SetVisible( true );
+	SetVisible( FoFHudShouldDraw() );
 }
 
 //-----------------------------------------------------------------------------
@@ -929,7 +942,7 @@ CHudMessage::message_t *CHudMessage::AllocMessage( void )
 	msg->a = 0;
 	msg->font = 0;
 
-	SetVisible( true );
+	SetVisible( FoFHudShouldDraw() );
 
 	return msg;
 }

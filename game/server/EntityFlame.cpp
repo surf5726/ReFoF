@@ -38,6 +38,9 @@ END_DATADESC()
 
 IMPLEMENT_SERVERCLASS_ST( CEntityFlame, DT_EntityFlame )
 	SendPropEHandle( SENDINFO( m_hEntAttached ) ),
+#if defined( HL2MP )
+	SendPropInt( SENDINFO( m_nMode ) ),
+#endif
 END_SEND_TABLE()
 
 LINK_ENTITY_TO_CLASS( entityflame, CEntityFlame );
@@ -49,11 +52,17 @@ PRECACHE_REGISTER(entityflame);
 //-----------------------------------------------------------------------------
 CEntityFlame::CEntityFlame( void )
 {
+	m_bCheapEffect		= false;
 	m_flSize			= 0.0f;
 	m_iNumHitboxFires	= 10;
 	m_flHitboxFireScale	= 1.0f;
 	m_flLifetime		= 0.0f;
+#if defined( HL2MP )
+	m_nMode = 0;
+#endif
 	m_bPlayingSound		= false;
+	m_flNextDamage		= 0.0f;
+	m_hAttacker			= NULL;
 }
 
 void CEntityFlame::UpdateOnRemove()
@@ -63,6 +72,7 @@ void CEntityFlame::UpdateOnRemove()
 	if ( m_bPlayingSound )
 	{
 		EmitSound( "General.StopBurning" );
+		StopSound( "General.BurningObject" );
 		m_bPlayingSound = false;
 	}
 
@@ -231,7 +241,7 @@ float CEntityFlame::GetHitboxFireScale( void )
 void CEntityFlame::FlameThink( void )
 {
 	// Assure that this function will be ticked again even if we early-out in the if below.
-	SetNextThink( gpGlobals->curtime + FLAME_DAMAGE_INTERVAL );
+	SetNextThink( gpGlobals->curtime + FLAME_THINK_INTERVAL );
 
 	if ( m_hEntAttached )
 	{
@@ -297,15 +307,28 @@ void CEntityFlame::FlameThink( void )
 		return;
 	}
 
+	if ( m_flNextDamage > gpGlobals->curtime && m_hEntAttached->IsNPC() )
+	{
+		return;
+	}
+
+	m_flNextDamage = gpGlobals->curtime + FLAME_DAMAGE_INTERVAL;
+
 	if ( m_hEntAttached )
 	{
+		CBaseEntity *pAttacker = m_hAttacker.Get();
+		if ( !pAttacker )
+		{
+			pAttacker = this;
+		}
+
 		// Do radius damage ignoring the entity I'm attached to. This will harm things around me.
-		RadiusDamage( CTakeDamageInfo( this, this, 4.0f, DMG_BURN ), GetAbsOrigin(), m_flSize/2, CLASS_NONE, m_hEntAttached );
+		RadiusDamage( CTakeDamageInfo( pAttacker, pAttacker, FLAME_DAMAGE, DMG_BURN ), GetAbsOrigin(), m_flSize/2, CLASS_NONE, m_hEntAttached );
 
 		// Directly harm the entity I'm attached to. This is so we can precisely control how much damage the entity
 		// that is on fire takes without worrying about the flame's position relative to the bodytarget (which is the
 		// distance that the radius damage code uses to determine how much damage to inflict)
-		m_hEntAttached->TakeDamage( CTakeDamageInfo( this, this, FLAME_DIRECT_DAMAGE, DMG_BURN | DMG_DIRECT ) );
+		m_hEntAttached->TakeDamage( CTakeDamageInfo( pAttacker, pAttacker, FLAME_DAMAGE, DMG_BURN ) );
 
 		if( !m_hEntAttached->IsNPC() && hl2_episodic.GetBool() )
 		{
@@ -317,7 +340,7 @@ void CEntityFlame::FlameThink( void )
 	}
 	else
 	{
-		RadiusDamage( CTakeDamageInfo( this, this, FLAME_RADIUS_DAMAGE, DMG_BURN ), GetAbsOrigin(), m_flSize/2, CLASS_NONE, NULL );
+		RadiusDamage( CTakeDamageInfo( this, this, FLAME_DAMAGE, DMG_BURN ), GetAbsOrigin(), m_flSize/2, CLASS_NONE, NULL );
 	}
 
 	FireSystem_AddHeatInRadius( GetAbsOrigin(), m_flSize/2, 2.0f );

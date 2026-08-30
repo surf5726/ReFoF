@@ -274,6 +274,17 @@ bool ReadWeaponDataFromFileForSlot( IFileSystem* filesystem, const char *szWeapo
 		Assert( 0 );
 		return false;
 	}
+
+	const char *pszWeaponScriptName = szWeaponName;
+#if defined( GAME_DLL )
+	char szFoFWeaponScriptName[128];
+	Q_strncpy( szFoFWeaponScriptName, szWeaponName,
+		sizeof( szFoFWeaponScriptName ) );
+	char *pszSecondGunSuffix = Q_strstr( szFoFWeaponScriptName, "2" );
+	if ( pszSecondGunSuffix )
+		*pszSecondGunSuffix = '\0';
+	pszWeaponScriptName = szFoFWeaponScriptName;
+#endif
 	
 	*phandle = FindWeaponInfoSlot( szWeaponName );
 	FileWeaponInfo_t *pFileInfo = GetFileWeaponInfoFromHandle( *phandle );
@@ -283,7 +294,7 @@ bool ReadWeaponDataFromFileForSlot( IFileSystem* filesystem, const char *szWeapo
 		return true;
 
 	char sz[128];
-	Q_snprintf( sz, sizeof( sz ), "scripts/%s", szWeaponName );
+	Q_snprintf( sz, sizeof( sz ), "scripts/%s", pszWeaponScriptName );
 
 	KeyValues *pKV = ReadEncryptedKVFile( filesystem, sz, pICEKey,
 #if defined( DOD_DLL )
@@ -461,4 +472,3 @@ void FileWeaponInfo_t::Parse( KeyValues *pKeyValuesData, const char *szWeaponNam
 		}
 	}
 }
-

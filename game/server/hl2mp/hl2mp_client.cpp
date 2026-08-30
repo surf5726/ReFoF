@@ -26,6 +26,10 @@
 #include "team.h"
 #include "viewport_panel_names.h"
 
+#include "fof/fof_bot.h"
+#include "fof/fof_player.h"
+#include "fof/fof_gamerules.h"
+
 #include "tier0/vprof.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -40,41 +44,33 @@ extern bool			g_fGameOver;
 
 void FinishClientPutInServer( CHL2MP_Player *pPlayer )
 {
+	if ( !pPlayer )
+		return;
+
 	pPlayer->InitialSpawn();
-	pPlayer->Spawn();
+	CFoF_Player *pFoFPlayer = ToFoFPlayer( pPlayer );
+	FoFPreparePlayerConnection( pFoFPlayer );
 
-
-	char sName[128];
-	Q_strncpy( sName, pPlayer->GetPlayerName(), sizeof( sName ) );
-	
-	// First parse the name and remove any %'s
-	for ( char *pApersand = sName; pApersand != NULL && *pApersand != 0; pApersand++ )
+	char szName[128];
+	Q_strncpy( szName, pPlayer->GetPlayerName(), sizeof( szName ) );
+	for ( char *pszCharacter = szName; *pszCharacter; ++pszCharacter )
 	{
-		// Replace it with a space
-		if ( *pApersand == '%' )
-				*pApersand = ' ';
+		if ( *pszCharacter == '%' )
+			*pszCharacter = ' ';
 	}
 
-	// notify other clients of player joining the game
-	UTIL_ClientPrintAll( HUD_PRINTNOTIFY, "#Game_connected", sName[0] != 0 ? sName : "<unconnected>" );
+	UTIL_ClientPrintAll(
+		HUD_PRINTNOTIFY, "#Game_connected",
+		szName[0] ? szName : "<unconnected>" );
 
-	if ( HL2MPRules()->IsTeamplay() == true )
+	if ( HL2MPRules()->IsTeamplay() )
 	{
-		ClientPrint( pPlayer, HUD_PRINTTALK, "You are on team %s1\n", pPlayer->GetTeam()->GetName() );
+		ClientPrint(
+			pPlayer, HUD_PRINTTALK, "You are on team %s1\n",
+			pPlayer->GetTeam()->GetName() );
 	}
 
-	const ConVar *hostname = cvar->FindVar( "hostname" );
-	const char *title = (hostname) ? hostname->GetString() : "MESSAGE OF THE DAY";
-
-	KeyValues *data = new KeyValues("data");
-	data->SetString( "title", title );		// info panel title
-	data->SetString( "type", "1" );			// show userdata from stringtable entry
-	data->SetString( "msg",	"motd" );		// use this stringtable entry
-	data->SetBool( "unload", sv_motd_unload_on_dismissal.GetBool() );
-
-	pPlayer->ShowViewPortPanel( PANEL_INFO, true, data );
-
-	data->deleteThis();
+	FoFPlayerActivated( pFoFPlayer );
 }
 
 /*
@@ -113,8 +109,21 @@ const char *GetGameDescription()
 {
 	if ( g_pGameRules ) // this function may be called before the world has spawned, and the game rules initialized
 		return g_pGameRules->GetGameDescription();
-	else
-		return "Half-Life 2 Deathmatch";
+
+	// Listen-server course commands select the mode before loading the map.
+	// Preserve that description during the short pre-GameRules interval so the
+	// shipped client initializes its course scoreboard and fake-player filter.
+	ConVar *pCurrentMode = cvar ?
+		cvar->FindVar( "fof_sv_currentmode" ) : NULL;
+	switch ( pCurrentMode ? pCurrentMode->GetInt() : 1 )
+	{
+	case 2: return "Teamplay";
+	case 3: return "Break Bad";
+	case 4: return "Team Elimination";
+	case 5: return "Versus";
+	case 6: return "Course Mode";
+	default: return "Fistful of Frags";
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -152,8 +161,10 @@ void ClientGamePrecache( void )
 	CBaseEntity::PrecacheScriptSound( "Bullets.GunshipNearmiss" );
 	CBaseEntity::PrecacheScriptSound( "Bullets.StriderNearmiss" );
 	
-	CBaseEntity::PrecacheScriptSound( "Geiger.BeepHigh" );
-	CBaseEntity::PrecacheScriptSound( "Geiger.BeepLow" );
+	// The shipped ClientGamePrecache performs the FoF model/sound pass here,
+	// after the common game assets have entered their string tables. This
+	// ordering matters to clients caching the included player animation model.
+	FoFPrecacheAssets();
 }
 
 
@@ -183,11 +194,7 @@ void GameStartFrame( void )
 		return;
 
 	gpGlobals->teamplay = (teamplay.GetInt() != 0);
-
-#ifdef DEBUG
-	extern void Bot_RunAll();
-	Bot_RunAll();
-#endif
+	FoFRunBots();
 }
 
 //=========================================================
@@ -198,4 +205,3 @@ void InstallGameRules()
 	// vanilla deathmatch
 	CreateGameRulesObject( "CHL2MPRules" );
 }
-

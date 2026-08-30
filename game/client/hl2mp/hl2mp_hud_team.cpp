@@ -131,59 +131,9 @@ void CTeamPlayHud::PerformLayout()
 //-----------------------------------------------------------------------------
 void CTeamPlayHud::OnThink()
 {
+	// FoF supplies its own team and mode HUDs.  The stock HL2DM panel is
+	// disabled in HudLayout.res, but its inherited implementation calls
+	// SetVisible( true ) again every frame while mp_teamplay is enabled.  That
+	// leaves the empty rounded TeamDisplay background at the lower left.
 	SetVisible( false );
-
-	C_BaseHLPlayer *pLocalPlayer = (C_BaseHLPlayer *)C_BasePlayer::GetLocalPlayer();
-
-	if ( pLocalPlayer == NULL )
-		 return;
-
-	if ( HL2MPRules()->IsTeamplay() == false )
-		 return;
-
-	if ( pLocalPlayer->IsAlive() == false )
-		 return;
-
-	if ( pLocalPlayer->m_HL2Local.m_flSuitPower < 100 )
-	{
-		if ( m_bSuitAuxPowerUsed == false )
-		{
-			g_pClientMode->GetViewportAnimationController()->StartAnimationSequence("FadeOutTeamLine");
-			m_bSuitAuxPowerUsed = true;
-		}
-	}
-	else
-	{
-		if ( m_bSuitAuxPowerUsed == true )
-		{
-			g_pClientMode->GetViewportAnimationController()->StartAnimationSequence("FadeInTeamLine");
-			m_bSuitAuxPowerUsed = false;
-		}
-	}
-	
-	int iTeamNumber = pLocalPlayer->GetTeamNumber();
-	Color c = GameResources()->GetTeamColor( iTeamNumber );
-
-	wchar_t string1[1024];
-	C_Team *pTeam = GetGlobalTeam( iTeamNumber );
-
-	if ( pTeam )
-	{
-		wchar_t TeamName[64];
-		g_pVGuiLocalize->ConvertANSIToUnicode( pTeam->Get_Name(), TeamName, sizeof(TeamName) );
-		
-		g_pVGuiLocalize->ConstructString( string1, sizeof(string1), g_pVGuiLocalize->Find("#Team"), 1, TeamName );
-		
-		m_pBackground->SetFgColor( GetFgColor() );
-		m_pWarmupLabel->SetFgColor(c);
-
-		m_pWarmupLabel->SetText( string1 );
-		m_pWarmupLabel->SetVisible( true );
-
-		m_pWarmupLabel->SizeToContents();
-
-		SetVisible( true );
-	}
-
-	InvalidateLayout();
 }

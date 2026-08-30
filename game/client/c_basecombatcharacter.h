@@ -20,7 +20,6 @@
 
 class C_BaseCombatWeapon;
 class C_WeaponCombatShield;
-
 #define BCC_DEFAULT_LOOK_TOWARDS_TOLERANCE 0.9f
 
 class C_BaseCombatCharacter : public C_BaseFlex
@@ -78,6 +77,11 @@ public:
 	bool SwitchToNextBestWeapon(C_BaseCombatWeapon *pCurrent);
 
 	virtual C_BaseCombatWeapon	*GetActiveWeapon( void ) const;
+	virtual C_BaseCombatWeapon	*GetActiveWeapon2( void ) const;
+	C_BaseCombatWeapon	*GetActiveWeapon1( void ) const;
+	void				SetActiveWeapon1( C_BaseCombatWeapon *pNewWeapon );
+	void				SetActiveWeapon2( C_BaseCombatWeapon *pNewWeapon );
+	bool				HasDualActiveWeapons( void ) const;
 	int					WeaponCount() const;
 	C_BaseCombatWeapon	*GetWeapon( int i ) const;
 
@@ -105,6 +109,11 @@ public:
 
 public:
 
+	// FoF's C_BaseEntity ancestry is eight bytes larger than the
+	// pinned SDK.  Keep that inherited-layout delta local to combat characters
+	// so their networked/predicted members retain the original x86 offsets
+	// without perturbing every other client entity.
+	unsigned char	m_FoFClientLayoutPad[8];
 	float			m_flNextAttack;
 
 protected:
@@ -130,6 +139,8 @@ private:
 	bool				m_bOldGlowEnabled;
 	CGlowObject			*m_pGlowEffect;
 #endif // GLOWS_ENABLE
+
+	CHandle< C_BaseCombatWeapon > m_hActiveWeapon2;
 
 private:
 	C_BaseCombatCharacter( const C_BaseCombatCharacter & ); // not defined, not accessible

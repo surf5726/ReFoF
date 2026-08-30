@@ -469,6 +469,10 @@ private:
 	// This method should return true if the bones have changed + SetupBones needs to be called
 	virtual float					LastBoneChangedTime() { return FLT_MAX; }
 
+public:
+	virtual void					ResetAnimationEventParity();
+
+private:
 	CBoneList*						RecordBones( CStudioHdr *hdr, matrix3x4_t *pBoneState );
 
 	bool							PutAttachment( int number, const matrix3x4_t &attachmentToWorld );

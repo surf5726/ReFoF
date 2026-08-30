@@ -1,6 +1,6 @@
 //========= Copyright Valve Corporation, All rights reserved. ============//
 //
-// Purpose: 
+// Purpose:
 //
 // $NoKeywords: $
 //=============================================================================//
@@ -36,7 +36,7 @@ private:
 class CHudChatInputLine : public CBaseHudChatInputLine
 {
 	DECLARE_CLASS_SIMPLE( CHudChatInputLine, CBaseHudChatInputLine );
-	
+
 public:
 	CHudChatInputLine( CBaseHudChat *parent, char const *panelName ) : CBaseHudChatInputLine( parent, panelName ) {}
 
@@ -59,7 +59,9 @@ public:
 
 	int				GetChatInputOffset( void );
 
+	virtual Color	GetDefaultTextColor( void );
+	virtual Color	GetTextColorForClient( TextColor colorNum, int clientIndex );
 	virtual Color	GetClientColor( int clientIndex );
 };
 
-#endif	//CS_HUD_CHAT_H
+#endif // CS_HUD_CHAT_H

@@ -10,6 +10,9 @@
 #pragma once
 
 class CHL2MP_Player;
+#if defined( HL2MP )
+class CHL2MPPlayerAnimState;
+#endif
 
 #include "basemultiplayerplayer.h"
 #include "hl2_playerlocaldata.h"
@@ -18,7 +21,29 @@ class CHL2MP_Player;
 #include "soundenvelope.h"
 #include "hl2mp_player_shared.h"
 #include "hl2mp_gamerules.h"
+#if defined( HL2MP )
+#include "Multiplayer/multiplayer_animstate.h"
+#endif
 #include "utldict.h"
+
+class CHL2MPRagdoll : public CBaseAnimatingOverlay
+{
+public:
+	DECLARE_CLASS( CHL2MPRagdoll, CBaseAnimatingOverlay );
+	DECLARE_SERVERCLASS();
+
+	virtual int UpdateTransmitState()
+	{
+		return SetTransmitState( FL_EDICT_ALWAYS );
+	}
+
+	CNetworkHandle( CBaseEntity, m_hPlayer );
+	CNetworkVector( m_vecRagdollVelocity );
+	CNetworkVector( m_vecRagdollOrigin );
+#if defined( HL2MP )
+	CNetworkVar( bool, m_bStickRagdoll );
+#endif
+};
 
 //=============================================================================
 // >> HL2MP_Player
@@ -69,12 +94,16 @@ public:
 	virtual bool Weapon_Switch( CBaseCombatWeapon *pWeapon, int viewmodelindex = 0);
 	virtual bool BumpWeapon( CBaseCombatWeapon *pWeapon );
 	virtual void ChangeTeam( int iTeam );
+	virtual void ChangeTeam( int iTeam, bool bDontKill,
+		bool bAutoTeam, bool bSilent );
 	virtual void PickupObject ( CBaseEntity *pObject, bool bLimitMassAndSize );
 	virtual void PlayStepSound( Vector &vecOrigin, surfacedata_t *psurface, float fvol, bool force );
 	virtual void Weapon_Drop( CBaseCombatWeapon *pWeapon, const Vector *pvecTarget = NULL, const Vector *pVelocity = NULL );
 	virtual void UpdateOnRemove( void );
 	virtual void DeathSound( const CTakeDamageInfo &info );
 	virtual CBaseEntity* EntSelectSpawnPoint( void );
+	virtual bool ShouldCollide(
+		int collisionGroup, int contentsMask ) const;
 		
 	int FlashlightIsOn( void );
 	void FlashlightTurnOn( void );
@@ -83,18 +112,24 @@ public:
 	bool	ValidatePlayerModel( const char *pModel );
 
 	QAngle GetAnimEyeAngles( void ) { return m_angEyeAngles.Get(); }
+#if defined( HL2MP )
+	CHL2MPPlayerAnimState *GetFoFPlayerAnimState( void ) const;
+	void SendFoFPlayerAnimEvent(
+		PlayerAnimEvent_t event, int nData = 0 );
+#endif
 
 	Vector GetAttackSpread( CBaseCombatWeapon *pWeapon, CBaseEntity *pTarget = NULL );
 
 	void CheatImpulseCommands( int iImpulse );
 	void CreateRagdollEntity( void );
-	void GiveAllItems( void );
-	void GiveDefaultItems( void );
+	virtual void GiveAllItems( void );
+	virtual void GiveDefaultItems( void );
 
 	void NoteWeaponFired( void );
 
 	void ResetAnimation( void );
-	void SetPlayerModel( void );
+	void HL2MPPushawayThink( void );
+	virtual void SetPlayerModel( void );
 	void SetPlayerTeamModel( void );
 	Activity TranslateTeamActivity( Activity ActToTranslate );
 	
@@ -104,6 +139,9 @@ public:
 	void  SetupPlayerSoundsByModel( const char *pModelName );
 	const char *GetPlayerModelSoundPrefix( void );
 	int	  GetPlayerModelType( void ) { return m_iPlayerSoundType;	}
+#if defined( HL2MP )
+	int	  GetFoFModelType( void ) const;
+#endif
 	
 	void  DetonateTripmines( void );
 
@@ -139,30 +177,47 @@ public:
 
 		
 private:
-
+#if defined( HL2MP )
+	// FoF CHL2MP_Player tail layout.  CFoF_Player starts at +0x135C,
+	// so this order is ABI-visible to every original FoF player routine.
+	HL2MPPlayerState m_iPlayerState;
+	float m_flFoFBaseUnknown12EC;
+	bool m_bStickRagdoll;
+	CHL2MPPlayerAnimState *m_PlayerAnimState;
 	CNetworkQAngle( m_angEyeAngles );
-	CPlayerAnimState   m_PlayerAnimState;
+	int m_iLastWeaponFireUsercmd;
+	int m_iModelType;
+	CNetworkVar( bool, m_bSpawnInterpCounter );
+	CNetworkVar( int, m_iPlayerSoundType );
+	float m_flNextModelChangeTime;
+	float m_flNextTeamChangeTime;
+	float m_flSlamProtectTime;
+	CHL2MPPlayerStateInfo *m_pCurStateInfo;
 
+	bool ShouldRunRateLimitedCommand( const CCommand &args );
+	CUtlDict<float,int> m_RateLimitLastCommandTimes;
+
+	bool m_bEnterObserver;
+	bool m_bReady;
+	CNetworkVar( int, m_cycleLatch );
+	CountdownTimer m_cycleLatchTimer;
+#else
+	CNetworkQAngle( m_angEyeAngles );
+	CPlayerAnimState m_PlayerAnimState;
 	int m_iLastWeaponFireUsercmd;
 	int m_iModelType;
 	CNetworkVar( int, m_iSpawnInterpCounter );
 	CNetworkVar( int, m_iPlayerSoundType );
-
 	float m_flNextModelChangeTime;
 	float m_flNextTeamChangeTime;
-
-	float m_flSlamProtectTime;	
-
+	float m_flSlamProtectTime;
 	HL2MPPlayerState m_iPlayerState;
 	CHL2MPPlayerStateInfo *m_pCurStateInfo;
-
 	bool ShouldRunRateLimitedCommand( const CCommand &args );
-
-	// This lets us rate limit the commands the players can execute so they don't overflow things like reliable buffers.
-	CUtlDict<float,int>	m_RateLimitLastCommandTimes;
-
-    bool m_bEnterObserver;
+	CUtlDict<float,int> m_RateLimitLastCommandTimes;
+	bool m_bEnterObserver;
 	bool m_bReady;
+#endif
 };
 
 inline CHL2MP_Player *ToHL2MPPlayer( CBaseEntity *pEntity )

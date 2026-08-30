@@ -292,6 +292,7 @@ public:
 	CNewParticleEffect *m_hEffect;
 	EHANDLE				m_hEntAttached;		// The entity that we are burning (attached to).
 	EHANDLE				m_hOldAttached;
+	int					m_nMode;
 
 protected:
 

@@ -16,9 +16,22 @@
 #include "tier1/KeyValues.h"
 #include "toolframework/itoolframework.h"
 #include "toolframework_client.h"
+#include "fof/fof_combat_effects.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
+
+void C_BaseCombatWeapon::DoAnimationEvents( CStudioHdr *pStudioHdr )
+{
+	// Remote weapon entities may retain a view-model sequence while their
+	// world model exposes only an idle sequence. There are no compatible
+	// events to consume, and clamping would corrupt predicted viewmodel timing.
+	if ( pStudioHdr && GetSequence() >= pStudioHdr->GetNumSeq() &&
+		GetModelIndex() == GetWorldModelIndex() )
+		return;
+
+	BaseClass::DoAnimationEvents( pStudioHdr );
+}
 
 //-----------------------------------------------------------------------------
 // Purpose: Gets the local client's active weapon, if any.
@@ -150,7 +163,7 @@ void C_BaseCombatWeapon::OnDataChanged( DataUpdateType_t updateType )
 					pHudSelection->OnWeaponPickup( this );
 				}
 
-				pPlayer->EmitSound( "Player.PickupWeapon" );
+				// FoF's server emits the authoritative weapon-specific pickup sound.
 			}
 		}
 	}
@@ -163,10 +176,7 @@ void C_BaseCombatWeapon::OnDataChanged( DataUpdateType_t updateType )
 		}
 	}
 
-	if ( updateType == DATA_UPDATE_CREATED )
-	{
-		UpdateVisibility();
-	}
+	UpdateVisibility();
 
 	m_iOldState = m_iState;
 
@@ -420,6 +430,9 @@ bool C_BaseCombatWeapon::ShouldDraw( void )
 	 // carried by local player?
 	if ( pOwner == pLocalPlayer )
 	{
+		if ( ShouldDrawLocalPlayerViewModel() )
+			return false;
+
 		// Only ever show the active weapon
 		if ( !bIsActive )
 			return false;
@@ -472,6 +485,9 @@ bool C_BaseCombatWeapon::ShouldDrawPickup( void )
 int C_BaseCombatWeapon::DrawModel( int flags )
 {
 	VPROF_BUDGET( "C_BaseCombatWeapon::DrawModel", VPROF_BUDGETGROUP_MODEL_RENDERING );
+	if ( IsCarriedByLocalPlayer() && !C_BasePlayer::ShouldDrawLocalPlayer() )
+		return 0;
+
 	if ( !m_bReadyToDraw )
 		return 0;
 

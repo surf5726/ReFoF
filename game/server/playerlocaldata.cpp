@@ -83,6 +83,9 @@ BEGIN_SEND_TABLE_NOBASE( CPlayerLocalData, DT_Local )
 	SendPropInt( SENDINFO_STRUCTELEM( m_audio.soundscapeIndex ), 17, 0 ),
 	SendPropInt( SENDINFO_STRUCTELEM( m_audio.localBits ), NUM_AUDIO_LOCAL_SOUNDS, SPROP_UNSIGNED ),
 	SendPropEHandle( SENDINFO_STRUCTELEM( m_audio.ent ) ),
+#if defined( HL2MP )
+	SendPropBool( SENDINFO( m_nStepside ) ),
+#endif
 END_SEND_TABLE()
 
 BEGIN_SIMPLE_DATADESC( fogplayerparams_t )
@@ -185,6 +188,9 @@ CPlayerLocalData::CPlayerLocalData()
 	m_audio.ent.Set( NULL );
 	m_pOldSkyCamera = NULL;
 	m_bDrawViewmodel = true;
+#if defined( HL2MP )
+	m_nStepside = 0;
+#endif
 }
 
 
@@ -253,4 +259,3 @@ void UpdateAllClientData( void )
 		ClientData_Update( pl );
 	}
 }
-

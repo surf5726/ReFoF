@@ -43,7 +43,9 @@ BEGIN_PREDICTION_DATA( CWeaponCrowbar )
 END_PREDICTION_DATA()
 
 LINK_ENTITY_TO_CLASS( weapon_crowbar, CWeaponCrowbar );
+#if !defined( GAME_DLL )
 PRECACHE_WEAPON_REGISTER( weapon_crowbar );
+#endif
 
 #ifndef CLIENT_DLL
 
@@ -224,5 +226,3 @@ float CWeaponCrowbar::GetFireRate( void )
 {
 	return	CROWBAR_REFIRE;	
 }
-
-

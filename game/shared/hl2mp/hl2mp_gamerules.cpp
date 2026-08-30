@@ -8,12 +8,11 @@
 #include "hl2mp_gamerules.h"
 #include "viewport_panel_names.h"
 #include "gameeventdefs.h"
+#include "fof/fof_weapon_ballistics.h"
 #include <KeyValues.h>
 #include "ammodef.h"
 
-#ifdef CLIENT_DLL
-	#include "c_hl2mp_player.h"
-#else
+#ifndef CLIENT_DLL
 
 	#include "eventqueue.h"
 	#include "player.h"
@@ -26,14 +25,20 @@
 	#include <ctype.h>
 	#include "voice_gamemgr.h"
 	#include "iscorer.h"
-	#include "hl2mp_player.h"
+#include "hl2mp_player.h"
+#if defined( GAME_DLL )
+#include "fof/fof_course_mode.h"
+#include "fof/fof_gamerules.h"
+#include "fof/fof_item_catalog.h"
+#include "fof/fof_modes.h"
+#include "fof/fof_player.h"
+#endif
 	#include "weapon_hl2mpbasehlmpcombatweapon.h"
 	#include "team.h"
-	#include "voice_gamemgr.h"
 	#include "hl2mp_gameinterface.h"
 	#include "hl2mp_cvars.h"
 
-#ifdef DEBUG	
+#if defined( DEBUG )
 	#include "hl2mp_bot_temp.h"
 #endif
 
@@ -61,8 +66,34 @@ BEGIN_NETWORK_TABLE_NOBASE( CHL2MPRules, DT_HL2MPRules )
 
 	#ifdef CLIENT_DLL
 		RecvPropBool( RECVINFO( m_bTeamPlayEnabled ) ),
+		RecvPropInt( RECVINFO( m_nMapSize ) ),
+		RecvPropInt( RECVINFO( m_nTPClassesTotal ) ),
+		RecvPropFloat( RECVINFO( flTimeLimit ) ),
+		RecvPropArray3( RECVINFO_ARRAY( m_nTPClassesUsage ), RecvPropInt( RECVINFO( m_nTPClassesUsage[0] ) ) ),
+		RecvPropArray3( RECVINFO_ARRAY( m_nTPClassesSlots ), RecvPropInt( RECVINFO( m_nTPClassesSlots[0] ) ) ),
+		RecvPropArray3( RECVINFO_ARRAY( m_nTPClassesUsageDesp ), RecvPropInt( RECVINFO( m_nTPClassesUsageDesp[0] ) ) ),
+		RecvPropArray3( RECVINFO_ARRAY( m_nTPClassesSlotsDesp ), RecvPropInt( RECVINFO( m_nTPClassesSlotsDesp[0] ) ) ),
+		RecvPropArray3( RECVINFO_ARRAY( vSafeZone1 ), RecvPropVector( RECVINFO( vSafeZone1[0] ) ) ),
+		RecvPropArray3( RECVINFO_ARRAY( vSafeZone2 ), RecvPropVector( RECVINFO( vSafeZone2[0] ) ) ),
+		RecvPropArray3( RECVINFO_ARRAY( vSafeZone3 ), RecvPropVector( RECVINFO( vSafeZone3[0] ) ) ),
+		RecvPropArray3( RECVINFO_ARRAY( vSafeZone4 ), RecvPropVector( RECVINFO( vSafeZone4[0] ) ) ),
+		RecvPropArray3( RECVINFO_ARRAY( m_bSafeZoneState ), RecvPropBool( RECVINFO( m_bSafeZoneState[0] ) ) ),
 	#else
 		SendPropBool( SENDINFO( m_bTeamPlayEnabled ) ),
+		#if defined( GAME_DLL )
+			SendPropInt( SENDINFO( m_nMapSize ) ),
+			SendPropInt( SENDINFO( m_nTPClassesTotal ) ),
+			SendPropFloat( SENDINFO( flTimeLimit ), 0, SPROP_NOSCALE ),
+			SendPropArray3( SENDINFO_ARRAY3( m_nTPClassesUsage ), SendPropInt( SENDINFO_ARRAY( m_nTPClassesUsage ), 3, SPROP_UNSIGNED ) ),
+			SendPropArray3( SENDINFO_ARRAY3( m_nTPClassesSlots ), SendPropInt( SENDINFO_ARRAY( m_nTPClassesSlots ), 3, SPROP_UNSIGNED ) ),
+			SendPropArray3( SENDINFO_ARRAY3( m_nTPClassesUsageDesp ), SendPropInt( SENDINFO_ARRAY( m_nTPClassesUsageDesp ), 3, SPROP_UNSIGNED ) ),
+			SendPropArray3( SENDINFO_ARRAY3( m_nTPClassesSlotsDesp ), SendPropInt( SENDINFO_ARRAY( m_nTPClassesSlotsDesp ), 3, SPROP_UNSIGNED ) ),
+			SendPropArray3( SENDINFO_ARRAY3( vSafeZone1 ), SendPropVector( SENDINFO_ARRAY( vSafeZone1 ), -1, SPROP_COORD ) ),
+			SendPropArray3( SENDINFO_ARRAY3( vSafeZone2 ), SendPropVector( SENDINFO_ARRAY( vSafeZone2 ), -1, SPROP_COORD ) ),
+			SendPropArray3( SENDINFO_ARRAY3( vSafeZone3 ), SendPropVector( SENDINFO_ARRAY( vSafeZone3 ), -1, SPROP_COORD ) ),
+			SendPropArray3( SENDINFO_ARRAY3( vSafeZone4 ), SendPropVector( SENDINFO_ARRAY( vSafeZone4 ), -1, SPROP_COORD ) ),
+			SendPropArray3( SENDINFO_ARRAY3( m_bSafeZoneState ), SendPropBool( SENDINFO_ARRAY( m_bSafeZoneState ) ) ),
+		#endif
 	#endif
 
 END_NETWORK_TABLE()
@@ -72,23 +103,195 @@ LINK_ENTITY_TO_CLASS( hl2mp_gamerules, CHL2MPGameRulesProxy );
 IMPLEMENT_NETWORKCLASS_ALIASED( HL2MPGameRulesProxy, DT_HL2MPGameRulesProxy )
 
 static HL2MPViewVectors g_HL2MPViewVectors(
-	Vector( 0, 0, 64 ),       //VEC_VIEW (m_vView) 
-							  
-	Vector(-16, -16, 0 ),	  //VEC_HULL_MIN (m_vHullMin)
-	Vector( 16,  16,  72 ),	  //VEC_HULL_MAX (m_vHullMax)
-							  					
-	Vector(-16, -16, 0 ),	  //VEC_DUCK_HULL_MIN (m_vDuckHullMin)
-	Vector( 16,  16,  36 ),	  //VEC_DUCK_HULL_MAX	(m_vDuckHullMax)
-	Vector( 0, 0, 28 ),		  //VEC_DUCK_VIEW		(m_vDuckView)
-							  					
-	Vector(-10, -10, -10 ),	  //VEC_OBS_HULL_MIN	(m_vObsHullMin)
-	Vector( 10,  10,  10 ),	  //VEC_OBS_HULL_MAX	(m_vObsHullMax)
-							  					
-	Vector( 0, 0, 14 ),		  //VEC_DEAD_VIEWHEIGHT (m_vDeadViewHeight)
+	Vector( 0, 0, 64 ),
+	Vector( -16, -16, 0 ),
+	Vector( 16, 16, 72 ),
+	Vector( -16, -16, 0 ),
+	Vector( 16, 16, 44 ),
+	Vector( 0, 0, 40 ),
+	Vector( -10, -10, -10 ),
+	Vector( 10, 10, 10 ),
+	Vector( 0, 0, 14 ),
+	Vector( -16, -16, 0 ),
+	Vector( 16, 16, 44 ) );
 
-	Vector(-16, -16, 0 ),	  //VEC_CROUCH_TRACE_MIN (m_vCrouchTraceMin)
-	Vector( 16,  16,  60 )	  //VEC_CROUCH_TRACE_MAX (m_vCrouchTraceMax)
-);
+const CViewVectors *CHL2MPRules::GetViewVectors() const
+{
+	return &g_HL2MPViewVectors;
+}
+
+const HL2MPViewVectors *CHL2MPRules::GetHL2MPViewVectors() const
+{
+	return &g_HL2MPViewVectors;
+}
+
+CAmmoDef *GetAmmoDef()
+{
+	static CAmmoDef ammoDef;
+	static bool initialized = false;
+
+	if ( !initialized )
+	{
+		initialized = true;
+		// Ammo counts are networked by numeric index; do not reorder these entries.
+		ammoDef.AddAmmoType( "357",           DMG_BULLET,                  TRACER_LINE_AND_WHIZ, 40, 40,  120,  327.170441f,  AMMO_INTERPRET_PLRDAMAGE_AS_DAMAGE_TO_PLAYER, 4, 8 );
+		ammoDef.AddAmmoType( "Rifle",         DMG_BULLET,                  TRACER_LINE_AND_WHIZ, 60, 60,  120,  667.973f,     4, 6, 8 );
+		ammoDef.AddAmmoType( "Rifle2",        DMG_BULLET,                  TRACER_LINE_AND_WHIZ, 100, 100, 120, 1226.88916f,   5, 9, 8 );
+		ammoDef.AddAmmoType( "XBowBolt",      DMG_BULLET,                  TRACER_NONE,          80, 80,  100,  654.3409f,    0, 4, 8 );
+		ammoDef.AddAmmoType( "XBowBolt2",     DMG_BURN,                    TRACER_NONE,          80, 80,  100,  654.3409f,    0, 4, 8 );
+		ammoDef.AddAmmoType( "Knife",         DMG_SLASH,                   TRACER_NONE,          25, 25,   50,   81.79261f,   5, 8, 8 );
+		ammoDef.AddAmmoType( "Axe",           DMG_SLASH,                   TRACER_NONE,          40, 40,   50,  136.321014f,  8, 12, 8 );
+		ammoDef.AddAmmoType( "Machete",       DMG_SLASH,                   TRACER_NONE,          40, 40,   50,  136.321014f,  8, 12, 8 );
+		ammoDef.AddAmmoType( "Buckshot",      DMG_BUCKSHOT,                TRACER_LINE,           4,  5,   80,  218.113632f, AMMO_INTERPRET_PLRDAMAGE_AS_DAMAGE_TO_PLAYER | FOF_AMMO_FIXED_BULLET_PATTERN, 4, 8 );
+		ammoDef.AddAmmoType( "RockSalt",      DMG_BUCKSHOT | DMG_ACID,     TRACER_LINE_AND_WHIZ,  4,  4,  100,  327.170441f, AMMO_FORCE_DROP_IF_CARRIED | AMMO_INTERPRET_PLRDAMAGE_AS_DAMAGE_TO_PLAYER | FOF_AMMO_FIXED_BULLET_PATTERN, 6, 8 );
+		ammoDef.AddAmmoType( "Grenade",       DMG_BURN,                    TRACER_NONE,           0,  0,   50,    0.0f,       0, 4, 8 );
+		ammoDef.AddAmmoType( "Dynamite_B",    DMG_BURN,                    TRACER_NONE,           0,  0,   50,    0.0f,       0, 4, 8 );
+		ammoDef.AddAmmoType( "dynamite_weak", DMG_BURN,                    TRACER_NONE,           0,  0,   50,    0.0f,       0, 4, 8 );
+		ammoDef.AddAmmoType( "Gatling",       DMG_BULLET,                  TRACER_LINE,          45, 45, 1000, 2910.45386f,  0, 4, 8 );
+	}
+
+	return &ammoDef;
+}
+
+#ifdef CLIENT_DLL
+static ConVar fof_sv_maxrounds(
+	"fof_sv_maxrounds", "0", FCVAR_REPLICATED,
+	"How many rounds are played until map ends" );
+static ConVar fof_sv_roundsplayed(
+	"fof_sv_roundsplayed", "0", FCVAR_REPLICATED );
+static ConVar fof_timer_show(
+	"fof_timer_show", "0", FCVAR_REPLICATED );
+
+void CHL2MPRules::InitializeFoFClientState()
+{
+	m_nMapSize = 0;
+	m_nTPClassesTotal = 0;
+	flTimeLimit = 0.0f;
+	Q_memset( m_nTPClassesUsage, 0, sizeof( m_nTPClassesUsage ) );
+	Q_memset( m_nTPClassesSlots, 0, sizeof( m_nTPClassesSlots ) );
+	Q_memset( m_nTPClassesUsageDesp, 0, sizeof( m_nTPClassesUsageDesp ) );
+	Q_memset( m_nTPClassesSlotsDesp, 0, sizeof( m_nTPClassesSlotsDesp ) );
+	Q_memset( vSafeZone1, 0, sizeof( vSafeZone1 ) );
+	Q_memset( vSafeZone2, 0, sizeof( vSafeZone2 ) );
+	Q_memset( vSafeZone3, 0, sizeof( vSafeZone3 ) );
+	Q_memset( vSafeZone4, 0, sizeof( vSafeZone4 ) );
+	Q_memset( m_bSafeZoneState, 0, sizeof( m_bSafeZoneState ) );
+	m_flGameStartTime = 0.0f;
+}
+
+bool CHL2MPRules::GetFoFSafeZoneQuad(
+	int index,
+	Vector &corner0,
+	Vector &corner1,
+	Vector &corner2,
+	Vector &corner3 ) const
+{
+	if ( index < 0 || index >= FOF_SAFE_ZONE_POINT_COUNT ||
+		!m_bSafeZoneState[index] )
+		return false;
+
+	corner0 = vSafeZone2[index];
+	corner1 = vSafeZone1[index];
+	corner2 = vSafeZone3[index];
+	corner3 = vSafeZone4[index];
+	return true;
+}
+
+float CHL2MPRules::GetFoFScoreboardTimeRemaining() const
+{
+	static ConVarRef mapStartTime( "map_start_time", true );
+	const int startTime = mapStartTime.IsValid()
+		? mapStartTime.GetInt() : -1;
+	if ( startTime == -1 || !gpGlobals )
+		return -1.0f;
+
+	return MAX(
+		0.0f,
+		(float)startTime + flTimeLimit * 60.0f - gpGlobals->curtime );
+}
+int CHL2MPRules::GetFoFTeamClassCount() const
+{
+	return clamp( m_nTPClassesTotal, 0, FOF_TEAMPLAY_CLASS_COUNT );
+}
+
+bool CHL2MPRules::IsFoFTeamClassAvailable(
+	int classIndex, int teamNumber ) const
+{
+	if ( classIndex < 0 || classIndex >= GetFoFTeamClassCount() )
+		return false;
+
+	if ( teamNumber == TEAM_COMBINE )
+	{
+		return m_nTPClassesUsage[classIndex] <
+			m_nTPClassesSlots[classIndex];
+	}
+
+	return m_nTPClassesUsageDesp[classIndex] <
+		m_nTPClassesSlotsDesp[classIndex];
+}
+
+void CHL2MPRules::GetFoFNeutralColor(
+	int nContext, float &flRed, float &flGreen, float &flBlue )
+{
+	(void)nContext;
+	flRed = 0.76f;
+	flGreen = 0.76f;
+	flBlue = 0.76f;
+}
+#elif defined( GAME_DLL )
+#endif
+
+float CHL2MPRules::GetFoFNotorietyPayoutProgress() const
+{
+	if ( flTimeLimit > 0.0f && gpGlobals )
+	{
+		const float duration = flTimeLimit * 60.0f;
+		const float remaining =
+			m_flGameStartTime + duration - gpGlobals->curtime;
+		return RemapValClamped(
+			remaining, 0.0f, duration, 1.0f, 0.01f );
+	}
+
+	static ConVarRef maxRounds( "fof_sv_maxrounds", true );
+	static ConVarRef roundsPlayed( "fof_sv_roundsplayed", true );
+	if ( maxRounds.IsValid() && maxRounds.GetInt() > 0 )
+	{
+		return RemapValClamped(
+			roundsPlayed.IsValid() ? (float)roundsPlayed.GetInt() : 0.0f,
+			0.0f, (float)maxRounds.GetInt(), 1.0f, 0.01f );
+	}
+	return 0.5f;
+}
+
+int CHL2MPRules::GetFoFNotorietyPayout(
+	int totalNotoriety,
+	int playerNotoriety,
+	int playerCount ) const
+{
+	const float progress = GetFoFNotorietyPayoutProgress();
+	float baseScale = ( progress - 0.05f ) * 1.05263162f;
+	baseScale = MAX( 0.0f, MIN( baseScale, 1.0f ) );
+	const int basePayout = (int)( ( 1.0f + baseScale ) * 30.0f );
+
+	playerNotoriety = MAX( 0, MIN( playerNotoriety, 1000 ) );
+	float playerShare;
+	if ( totalNotoriety == 0 )
+	{
+		playerShare = playerCount > 0
+			? (float)( 1 / playerCount ) : 0.0f;
+	}
+	else
+	{
+		const float denominator = MAX(
+			1.0f, MIN( (float)totalNotoriety, 1000.0f ) );
+		playerShare = (float)playerNotoriety / denominator;
+	}
+
+	volatile float orderedBonus = (float)basePayout * 0.1f;
+	orderedBonus = orderedBonus * (float)playerCount;
+	orderedBonus = orderedBonus * playerShare;
+	return basePayout + (int)orderedBonus;
+}
 
 static const char *s_PreserveEnts[] =
 {
@@ -175,6 +378,7 @@ static const char *s_PreserveEnts[] =
 #endif
 
 // NOTE: the indices here must match TEAM_TERRORIST, TEAM_CT, TEAM_SPECTATOR, etc.
+#if !defined( GAME_DLL )
 char *sTeamNames[] =
 {
 	"Unassigned",
@@ -182,11 +386,19 @@ char *sTeamNames[] =
 	"Combine",
 	"Rebels",
 };
+#endif
 
 CHL2MPRules::CHL2MPRules()
 {
+#ifdef CLIENT_DLL
+	InitializeFoFClientState();
+#endif
+
 #ifndef CLIENT_DLL
 	// Create the team managers
+#if defined( GAME_DLL )
+	InitializeFoFRuleTeams();
+#else
 	for ( int i = 0; i < ARRAYSIZE( sTeamNames ); i++ )
 	{
 		CTeam *pTeam = static_cast<CTeam*>(CreateEntityByName( "team_manager" ));
@@ -194,6 +406,7 @@ CHL2MPRules::CHL2MPRules()
 
 		g_Teams.AddToTail( pTeam );
 	}
+#endif
 
 	m_bTeamPlayEnabled = teamplay.GetBool();
 	m_flIntermissionEndTime = 0.0f;
@@ -207,19 +420,13 @@ CHL2MPRules::CHL2MPRules()
 	m_bAwaitingReadyRestart = false;
 	m_bChangelevelDone = false;
 
+#if defined( GAME_DLL )
+	InitializeFoFServerState();
+#endif
+
 #endif
 }
 
-const CViewVectors* CHL2MPRules::GetViewVectors()const
-{
-	return &g_HL2MPViewVectors;
-}
-
-const HL2MPViewVectors* CHL2MPRules::GetHL2MPViewVectors()const
-{
-	return &g_HL2MPViewVectors;
-}
-	
 CHL2MPRules::~CHL2MPRules( void )
 {
 #ifndef CLIENT_DLL
@@ -285,6 +492,9 @@ void CHL2MPRules::PlayerKilled( CBasePlayer *pVictim, const CTakeDamageInfo &inf
 #ifndef CLIENT_DLL
 	if ( IsIntermission() )
 		return;
+#if defined( GAME_DLL )
+	HandleFoFPlayerKilled( pVictim, info );
+#endif
 	BaseClass::PlayerKilled( pVictim, info );
 #endif
 }
@@ -296,6 +506,10 @@ void CHL2MPRules::Think( void )
 #ifndef CLIENT_DLL
 	
 	CGameRules::Think();
+
+#if defined( GAME_DLL )
+	UpdateFoFServerState();
+#endif
 
 	if ( g_fGameOver )   // someone else quit the game already
 	{
@@ -314,14 +528,19 @@ void CHL2MPRules::Think( void )
 
 //	float flTimeLimit = mp_timelimit.GetFloat() * 60;
 	float flFragLimit = fraglimit.GetFloat();
-	
-	if ( GetMapRemainingTime() < 0 )
+	static ConVarRef currentMode( "fof_sv_currentmode", true );
+	const bool bCourseMode = currentMode.IsValid() &&
+		currentMode.GetInt() == 6;
+	// Course scripts own their timers and completion.  Match limits must not
+	// open the ordinary deathmatch results over the course end menu.
+
+	if ( !bCourseMode && GetMapRemainingTime() < 0 )
 	{
 		GoToIntermission();
 		return;
 	}
 
-	if ( flFragLimit )
+	if ( !bCourseMode && flFragLimit )
 	{
 		if( IsTeamplay() == true )
 		{
@@ -386,6 +605,9 @@ void CHL2MPRules::GoToIntermission( void )
 
 	m_flIntermissionEndTime = gpGlobals->curtime + mp_chattime.GetInt();
 
+	#if defined( GAME_DLL )
+	BeginFoFIntermission();
+	#else
 	for ( int i = 0; i < MAX_PLAYERS; i++ )
 	{
 		CBasePlayer *pPlayer = UTIL_PlayerByIndex( i );
@@ -396,6 +618,7 @@ void CHL2MPRules::GoToIntermission( void )
 		pPlayer->ShowViewPortPanel( PANEL_SCOREBOARD );
 		pPlayer->AddFlag( FL_FROZEN );
 	}
+	#endif
 #endif
 	
 }
@@ -596,9 +819,12 @@ QAngle CHL2MPRules::VecItemRespawnAngles( CItem *pItem )
 //=========================================================
 float CHL2MPRules::FlItemRespawnTime( CItem *pItem )
 {
+	#if defined( GAME_DLL )
+		return FoFGetItemRespawnTime();
+	#endif
+
 	return sv_hl2mp_item_respawn_time.GetFloat();
 }
-
 
 //=========================================================
 // CanHaveWeapon - returns false if the player is not allowed
@@ -658,11 +884,158 @@ void CHL2MPRules::ClientDisconnected( edict_t *pClient )
 
 
 //=========================================================
-// Deathnotice. 
+// Deathnotice.
 //=========================================================
+#if defined( GAME_DLL ) && !defined( CLIENT_DLL )
+static const char *FoFDeathNoticeEntityName( CBaseEntity *pEntity )
+{
+	if ( !pEntity )
+		return NULL;
+
+	CBaseCombatWeapon *pWeapon = pEntity->MyCombatWeaponPointer();
+	if ( pWeapon )
+	{
+		const char *pszNoticeName = pWeapon->GetDeathNoticeName();
+		if ( pszNoticeName && pszNoticeName[0] )
+			return pszNoticeName;
+	}
+	return pEntity->GetClassname();
+}
+
+static void FoFNormalizeDeathNoticeName(
+	const char *pszSource, int nDamageType,
+	char *pszOutput, int nOutputSize )
+{
+	if ( !pszOutput || nOutputSize <= 0 )
+		return;
+
+	const char *pszName = pszSource && pszSource[0] ? pszSource : "world";
+	if ( Q_stristr( pszName, "physics" ) )
+	{
+		pszName = ( nDamageType & DMG_BLAST ) ? "blast" : "physics";
+	}
+	else if ( !Q_strnicmp( pszName, "weapon_", 7 ) )
+	{
+		pszName += 7;
+	}
+	else if ( !Q_strnicmp( pszName, "npc_", 4 ) )
+	{
+		pszName += 4;
+	}
+	else if ( !Q_strnicmp( pszName, "func_", 5 ) )
+	{
+		pszName += 5;
+	}
+
+	Q_strncpy( pszOutput, pszName, nOutputSize );
+}
+
+static int FoFDeathNoticeWeaponIndex(
+	const char *pszRawName, const char *pszNoticeName )
+{
+	int nIndex = FoFItemStatisticsIndex( pszRawName );
+	if ( nIndex >= 0 )
+		return nIndex;
+
+	nIndex = FoFItemStatisticsIndex( pszNoticeName );
+	if ( nIndex >= 0 || !pszNoticeName || !pszNoticeName[0] )
+		return nIndex;
+
+	char szWeaponName[128];
+	Q_snprintf( szWeaponName, sizeof( szWeaponName ),
+		"weapon_%s", pszNoticeName );
+	return FoFItemStatisticsIndex( szWeaponName );
+}
+#endif
+
 void CHL2MPRules::DeathNotice( CBasePlayer *pVictim, const CTakeDamageInfo &info )
 {
 #ifndef CLIENT_DLL
+#if defined( GAME_DLL )
+	{
+	CBaseEntity *pInflictor = info.GetInflictor();
+	CBaseEntity *pKiller = info.GetAttacker();
+	CBasePlayer *pScorer = GetDeathScorer( pKiller, pInflictor );
+	CFoF_Player *pFoFVictim = ToFoFPlayer( pVictim );
+	CFoF_Player *pFoFScorer = ToFoFPlayer( pScorer );
+	const int nDamageType = info.GetDamageType();
+
+	const char *pszRawName = NULL;
+	if ( pFoFVictim && pFoFScorer &&
+		pFoFVictim->GetFoFKicker() == pFoFScorer &&
+		( nDamageType & ( DMG_BURN | DMG_FALL | DMG_DROWN ) ) )
+	{
+		pszRawName = "kick-fall";
+	}
+	else if ( pFoFScorer && pFoFScorer->IsOnFoFHorse() &&
+		( nDamageType & DMG_AIRBOAT ) )
+	{
+		pszRawName = "horse-ram";
+	}
+	else if ( nDamageType & DMG_BURN )
+	{
+		pszRawName = "flame";
+	}
+	else if ( nDamageType & DMG_PREVENT_PHYSICS_FORCE )
+	{
+		pszRawName = "thrown_gun";
+	}
+	else if ( info.GetDamageCustom() == 11 )
+	{
+		pszRawName = "kick";
+	}
+	else
+	{
+		CBaseEntity *pWeapon = info.GetWeapon();
+		if ( pWeapon )
+			pszRawName = FoFDeathNoticeEntityName( pWeapon );
+		else if ( pScorer && pInflictor == pScorer )
+			pszRawName = FoFDeathNoticeEntityName(
+				pScorer->GetActiveWeapon() );
+		else
+			pszRawName = FoFDeathNoticeEntityName( pInflictor );
+	}
+
+	char szWeaponName[128];
+	FoFNormalizeDeathNoticeName(
+		pszRawName, nDamageType, szWeaponName, sizeof( szWeaponName ) );
+	if ( pFoFScorer &&
+		( !Q_stricmp( szWeaponName, "fists" ) ||
+		  !Q_stricmp( szWeaponName, "weapon_fists" ) ) &&
+		( pFoFScorer->GetFoFPlayerInfo() & 0x4 ) )
+	{
+		Q_strncpy( szWeaponName, "fists_brass", sizeof( szWeaponName ) );
+		pszRawName = "fists_brass";
+	}
+
+	int nAssistUserID = 0;
+	if ( pFoFVictim )
+	{
+		CFoF_Player *pAssister = ToFoFPlayer(
+			pFoFVictim->hPlayerAssisted.Get() );
+		if ( pAssister && pAssister != pFoFScorer )
+			nAssistUserID = pAssister->GetUserID();
+	}
+
+	IGameEvent *pEvent = gameeventmanager->CreateEvent( "player_death" );
+	if ( pEvent )
+	{
+		pEvent->SetInt( "userid", pVictim->GetUserID() );
+		pEvent->SetInt( "attacker", pScorer ? pScorer->GetUserID() : 0 );
+		pEvent->SetString( "weapon", szWeaponName );
+		pEvent->SetInt( "priority", 7 );
+		pEvent->SetBool( "headshot", ( nDamageType & DMG_SHOCK ) != 0 );
+		pEvent->SetInt( "assist", nAssistUserID );
+		pEvent->SetInt( "damagebits", nDamageType );
+		pEvent->SetBool( "penetration",
+			info.GetPlayerPenetrationCount() > 0 );
+		pEvent->SetInt( "weapon_index",
+			FoFDeathNoticeWeaponIndex( pszRawName, szWeaponName ) );
+		gameeventmanager->FireEvent( pEvent );
+	}
+	return;
+	}
+#endif
 	// Work out what killed the player, and send a message to all clients about it
 	const char *killer_weapon_name = "world";		// by default, the player is killed by the world
 	int killer_ID = 0;
@@ -683,6 +1056,17 @@ void CHL2MPRules::DeathNotice( CBasePlayer *pVictim, const CTakeDamageInfo &info
 	}
 	else
 	{
+#if defined( GAME_DLL )
+		CFoF_Player *pFoFScorer = ToFoFPlayer( pScorer );
+		if ( pFoFScorer && pFoFScorer->IsOnFoFHorse() &&
+			( info.GetDamageType() & DMG_AIRBOAT ) )
+		{
+			killer_ID = pFoFScorer->GetUserID();
+			killer_weapon_name = "horse-ram";
+		}
+		else
+#endif
+		{
 		// Is the killer a client?
 		if ( pScorer )
 		{
@@ -739,6 +1123,7 @@ void CHL2MPRules::DeathNotice( CBasePlayer *pVictim, const CTakeDamageInfo &info
 		{
 			killer_weapon_name = "slam";
 		}
+		}
 
 
 	}
@@ -759,7 +1144,12 @@ void CHL2MPRules::DeathNotice( CBasePlayer *pVictim, const CTakeDamageInfo &info
 void CHL2MPRules::ClientSettingsChanged( CBasePlayer *pPlayer )
 {
 #ifndef CLIENT_DLL
-	
+
+#if defined( GAME_DLL )
+	HandleFoFClientSettingsChanged( pPlayer );
+	return;
+#endif
+
 	CHL2MP_Player *pHL2Player = ToHL2MPPlayer( pPlayer );
 
 	if ( pHL2Player == NULL )
@@ -827,6 +1217,14 @@ int CHL2MPRules::PlayerRelationship( CBaseEntity *pPlayer, CBaseEntity *pTarget 
 	if ( !pPlayer || !pTarget || !pTarget->IsPlayer() || IsTeamplay() == false )
 		return GR_NOTTEAMMATE;
 
+#if defined( GAME_DLL )
+	if ( FoFCourseBotsAreAllied(
+		pPlayer->GetTeamNumber(), pTarget->GetTeamNumber() ) )
+	{
+		return GR_TEAMMATE;
+	}
+#endif
+
 	if ( (*GetTeamID(pPlayer) != '\0') && (*GetTeamID(pTarget) != '\0') && !stricmp( GetTeamID(pPlayer), GetTeamID(pTarget) ) )
 	{
 		return GR_TEAMMATE;
@@ -837,12 +1235,63 @@ int CHL2MPRules::PlayerRelationship( CBaseEntity *pPlayer, CBaseEntity *pTarget 
 }
 
 const char *CHL2MPRules::GetGameDescription( void )
-{ 
-	if ( IsTeamplay() )
-		return "Team Deathmatch"; 
+{
+	ConVar *pCurrentMode = cvar ?
+		cvar->FindVar( "fof_sv_currentmode" ) : NULL;
+	ConVar *pMaxTeams = cvar ? cvar->FindVar( "fof_sv_maxteams" ) : NULL;
+	ConVar *pRankedServer = cvar ?
+		cvar->FindVar( "fof_sv_rankedserver" ) : NULL;
+	ConVar *pClassicShootout = cvar ?
+		cvar->FindVar( "fof_sv_classic_shootout" ) : NULL;
+	ConVar *pGhostTown = cvar ?
+		cvar->FindVar( "fof_sv_ghost_town" ) : NULL;
+	ConVar *pBattleRoyale = cvar ?
+		cvar->FindVar( "fof_sv_battle_royale" ) : NULL;
 
-	return "Deathmatch"; 
-} 
+	const int nMode = pCurrentMode ? pCurrentMode->GetInt() : 1;
+	const int nTeams = pMaxTeams ? pMaxTeams->GetInt() : 4;
+	if ( pRankedServer && pRankedServer->GetBool() && nMode == 1 )
+	{
+		if ( !IsTeamplay() )
+			return "Ranked Shootout";
+		if ( nTeams == 2 )
+			return "Ranked 2 Teams";
+		if ( nTeams == 3 )
+			return "Ranked 3 Teams";
+		if ( nTeams == 4 )
+			return "Ranked 4 Teams";
+	}
+
+	if ( nMode == 2 )
+		return "Teamplay";
+	if ( nMode == 3 )
+		return "Break Bad";
+	if ( nMode == 4 )
+	{
+		return pBattleRoyale && pBattleRoyale->GetBool() ?
+			"Grand Elimination" : "Team Elimination";
+	}
+	if ( nMode == 5 )
+		return "Versus";
+	if ( nMode == 6 )
+		return "Course Mode";
+	if ( pGhostTown && pGhostTown->GetBool() )
+		return "Ghost Town";
+
+	const bool bClassic =
+		pClassicShootout && pClassicShootout->GetBool();
+	if ( !IsTeamplay() )
+		return bClassic ? "Classic Shootout" : "Shootout";
+	if ( bClassic )
+		return "Classic Team Shootout";
+	if ( nTeams == 2 )
+		return "2 Teams Shootout";
+	if ( nTeams == 3 )
+		return "3 Teams Shootout";
+	if ( nTeams == 4 )
+		return "4 Teams Shootout";
+	return "Fistful of Frags";
+}
 
 bool CHL2MPRules::IsConnectedUserInfoChangeAllowed( CBasePlayer *pPlayer )
 {
@@ -869,13 +1318,19 @@ void CHL2MPRules::Precache( void )
 {
 	CBaseEntity::PrecacheScriptSound( "AlyxEmp.Charge" );
 }
-
 bool CHL2MPRules::ShouldCollide( int collisionGroup0, int collisionGroup1 )
 {
 	if ( collisionGroup0 > collisionGroup1 )
 	{
 		// swap so that lowest is always first
 		V_swap(collisionGroup0,collisionGroup1);
+	}
+
+	if ( ( collisionGroup0 == COLLISION_GROUP_PLAYER ||
+		collisionGroup0 == COLLISION_GROUP_PLAYER_MOVEMENT ) &&
+		collisionGroup1 == COLLISION_GROUP_PUSHAWAY )
+	{
+		return false;
 	}
 
 	if ( (collisionGroup0 == COLLISION_GROUP_PLAYER || collisionGroup0 == COLLISION_GROUP_PLAYER_MOVEMENT) &&
@@ -902,42 +1357,6 @@ bool CHL2MPRules::ClientCommand( CBaseEntity *pEdict, const CCommand &args )
 #endif
 
 	return false;
-}
-
-// shared ammo definition
-// JAY: Trying to make a more physical bullet response
-#define BULLET_MASS_GRAINS_TO_LB(grains)	(0.002285*(grains)/16.0f)
-#define BULLET_MASS_GRAINS_TO_KG(grains)	lbs2kg(BULLET_MASS_GRAINS_TO_LB(grains))
-
-// exaggerate all of the forces, but use real numbers to keep them consistent
-#define BULLET_IMPULSE_EXAGGERATION			3.5
-// convert a velocity in ft/sec and a mass in grains to an impulse in kg in/s
-#define BULLET_IMPULSE(grains, ftpersec)	((ftpersec)*12*BULLET_MASS_GRAINS_TO_KG(grains)*BULLET_IMPULSE_EXAGGERATION)
-
-
-CAmmoDef *GetAmmoDef()
-{
-	static CAmmoDef def;
-	static bool bInitted = false;
-	
-	if ( !bInitted )
-	{
-		bInitted = true;
-
-		def.AddAmmoType("AR2",				DMG_BULLET,					TRACER_LINE_AND_WHIZ,	0,			0,			60,			BULLET_IMPULSE(200, 1225),	0 );
-		def.AddAmmoType("AR2AltFire",		DMG_DISSOLVE,				TRACER_NONE,			0,			0,			3,			0,							0 );
-		def.AddAmmoType("Pistol",			DMG_BULLET,					TRACER_LINE_AND_WHIZ,	0,			0,			150,		BULLET_IMPULSE(200, 1225),	0 );
-		def.AddAmmoType("SMG1",				DMG_BULLET,					TRACER_LINE_AND_WHIZ,	0,			0,			225,		BULLET_IMPULSE(200, 1225),	0 );
-		def.AddAmmoType("357",				DMG_BULLET,					TRACER_LINE_AND_WHIZ,	0,			0,			12,			BULLET_IMPULSE(800, 5000),	0 );
-		def.AddAmmoType("XBowBolt",			DMG_BULLET,					TRACER_LINE,			0,			0,			10,			BULLET_IMPULSE(800, 8000),	0 );
-		def.AddAmmoType("Buckshot",			DMG_BULLET | DMG_BUCKSHOT,	TRACER_LINE,			0,			0,			30,			BULLET_IMPULSE(400, 1200),	0 );
-		def.AddAmmoType("RPG_Round",		DMG_BURN,					TRACER_NONE,			0,			0,			3,			0,							0 );
-		def.AddAmmoType("SMG1_Grenade",		DMG_BURN,					TRACER_NONE,			0,			0,			3,			0,							0 );
-		def.AddAmmoType("Grenade",			DMG_BURN,					TRACER_NONE,			0,			0,			5,			0,							0 );
-		def.AddAmmoType("slam",				DMG_BURN,					TRACER_NONE,			0,			0,			5,			0,							0 );
-	}
-
-	return &def;
 }
 
 #ifdef CLIENT_DLL
@@ -977,18 +1396,11 @@ CAmmoDef *GetAmmoDef()
 #endif
 
 	bool CHL2MPRules::FShouldSwitchWeapon( CBasePlayer *pPlayer, CBaseCombatWeapon *pWeapon )
-	{		
-		if ( pPlayer->GetActiveWeapon() && pPlayer->IsNetClient() )
-		{
-			// Player has an active item, so let's check cl_autowepswitch.
-			const char *cl_autowepswitch = engine->GetClientConVarValue( engine->IndexOfEdict( pPlayer->edict() ), "cl_autowepswitch" );
-			if ( cl_autowepswitch && atoi( cl_autowepswitch ) <= 0 )
-			{
-				return false;
-			}
-		}
-
-		return BaseClass::FShouldSwitchWeapon( pPlayer, pWeapon );
+	{
+		// FoF adds acquired weapons to the inventory without Source's automatic
+		// "more powerful weapon" switch; explicit FoF switch paths still call
+		// Weapon_Switch themselves when a mode or hand replacement requires it.
+		return false;
 	}
 
 #endif
@@ -997,6 +1409,13 @@ CAmmoDef *GetAmmoDef()
 
 void CHL2MPRules::RestartGame()
 {
+#if defined( GAME_DLL )
+	// The shipped FoF rules create the mode-owned entity during the round
+	// restart path, before round_start is broadcast.  ServerActivate remains
+	// a fallback for maps that never enter this path during startup.
+	FoFCreateModeControllerForCurrentGame();
+#endif
+
 	// bounds check
 	if ( mp_timelimit.GetInt() < 0 )
 	{
@@ -1078,7 +1497,11 @@ void CHL2MPRules::CleanUpMap()
 			}
 		}
 		// remove entities that has to be restored on roundrestart (breakables etc)
-		else if ( !FindInList( s_PreserveEnts, pCur->GetClassname() ) )
+		else if ( !FindInList( s_PreserveEnts, pCur->GetClassname() )
+#if defined( GAME_DLL )
+			&& !FoFShouldPreserveRoundEntity( pCur->GetClassname() )
+#endif
+			)
 		{
 			UTIL_Remove( pCur );
 		}
@@ -1100,7 +1523,11 @@ void CHL2MPRules::CleanUpMap()
 		virtual bool ShouldCreateEntity( const char *pClassname )
 		{
 			// Don't recreate the preserved entities.
-			if ( !FindInList( s_PreserveEnts, pClassname ) )
+			if ( !FindInList( s_PreserveEnts, pClassname )
+#if defined( GAME_DLL )
+				&& !FoFShouldPreserveRoundEntity( pClassname )
+#endif
+				)
 			{
 				return true;
 			}

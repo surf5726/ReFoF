@@ -37,7 +37,6 @@ class C_BaseViewModel;
 class C_FuncLadder;
 class CFlashlightEffect;
 class C_EconWearable;
-
 extern int g_nKillCamMode;
 extern int g_nKillCamTarget1;
 extern int g_nKillCamTarget2;
@@ -82,6 +81,8 @@ public:
 	virtual void	Spawn( void );
 	virtual void	SharedSpawn(); // Shared between client and server.
 	virtual bool	GetSteamID( CSteamID *pID );
+	virtual void	MakeTracer( const Vector &vecTracerSrc, const trace_t &tr,
+		int iTracerType, bool bPrimary );
 
 	// IClientEntity overrides.
 	virtual void	OnPreDataChanged( DataUpdateType_t updateType );
@@ -201,6 +202,12 @@ public:
 
 	void						SetMaxSpeed( float flMaxSpeed ) { m_flMaxspeed = flMaxSpeed; }
 	float						MaxSpeed() const		{ return m_flMaxspeed; }
+	bool						IsOnFoFHorse() const;
+	float						GetFoFHorseAcceleration() const;
+	float						GetFoFSlideForce() const;
+	float						GetFoFJWallForce() const;
+	const Vector &				GetFoFSlideMove() const;
+	const QAngle &				GetFoFSlideView() const;
 
 	// Should this object cast shadows?
 	virtual ShadowType_t		ShadowCastType() { return SHADOWS_NONE; }
@@ -436,6 +443,14 @@ public:
 
 	CUserCmd		*m_pCurrentCommand;
 
+	// FoF diagnostics and presentation need to observe the replicated kick
+	// window.  C_FoF_Player::ItemPostFrame also predicts the authoritative
+	// kick start before the untouched server snapshot returns.
+	float			GetFoFKickTime() const;
+	void			SetFoFKickTime( float flTime );
+	float			GetFoFKickedPenaltyTime() const;
+	void			SetFoFKickedPenaltyTime( float flTime );
+
 	// Movement constraints
 	EHANDLE			m_hConstraintEntity;
 	Vector			m_vecConstraintCenter;
@@ -531,6 +546,19 @@ private:
 
 	typedef CHandle<C_BaseCombatWeapon> CBaseCombatWeaponHandle;
 	CNetworkVar( CBaseCombatWeaponHandle, m_hLastWeapon );
+	CNetworkVar( CBaseCombatWeaponHandle, m_hLastWeapon2 );
+
+	// Fistful of Frags movement state carried by DT_BasePlayer and the
+	// local-player-exclusive table.
+	float			m_flSlideForce;
+	float			m_flJWallForce;
+	bool			m_bOnHorse;
+	float			m_flHorseAcc;
+	float			consecutiveJumps;
+	float			m_flKickTime;
+	float			m_flKickedPenaltyTime;
+	Vector			m_vecSlide;
+	QAngle			m_angSlideView;
 
 #if !defined( NO_ENTITY_PREDICTION )
 	CUtlVector< CHandle< C_BaseEntity > > m_SimulatedByThisPlayer;
@@ -565,6 +593,7 @@ private:
 	// HACK FOR TF2 Prediction
 	friend class CTFGameMovementRecon;
 	friend class CGameMovement;
+	friend class CFoFGameMovement;
 	friend class CTFGameMovement;
 	friend class CHL1GameMovement;
 	friend class CCSGameMovement;

@@ -33,6 +33,9 @@ public:
 
 	CFlare();
 	~CFlare();
+#if defined( HL2MP )
+	virtual void NetworkStateChanged_m_iAmmo( void );
+#endif
 
 	static CFlare *	GetActiveFlares( void );
 	CFlare *		GetNextFlare( void ) const { return m_pNextFlare; }
@@ -103,4 +106,3 @@ public:
 };
 
 #endif // WEAPON_FLAREGUN_H
-

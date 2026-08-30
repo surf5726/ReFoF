@@ -1,5 +1,47 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-pushd `dirname $0`
-devtools/bin/vpc /hl2mp +everything /mksln everything
-popd
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+cd "$script_dir"
+
+mode="${VPC_NINJA_BUILD_MODE:-release}"
+if [[ $# -gt 0 && ( "$1" == "debug" || "$1" == "release" ) ]]; then
+	mode="$1"
+	shift
+fi
+
+case "$mode" in
+	debug|release) ;;
+	*) echo "Usage: $0 [debug|release] [VPC options...]" >&2; exit 1 ;;
+esac
+
+export VPC_NINJA_BUILD_MODE="$mode"
+output="_vpc_/ninja/everything_${mode}"
+mkdir -p "$(dirname -- "$output")"
+
+vpc="./devtools/bin/vpc"
+if [[ ! -x "$vpc" ]]; then
+	chmod +x "$vpc"
+fi
+
+"$vpc" /linux32 /ninja /hl2mp /define:SOURCESDK +everything /mksln "$output" "$@"
+
+ninja_file="${output}.ninja"
+if ! cc="$(command -v "${CC:-gcc}")"; then
+	echo "C compiler not found: ${CC:-gcc}" >&2
+	exit 1
+fi
+if ! cxx="$(command -v "${CXX:-g++}")"; then
+	echo "C++ compiler not found: ${CXX:-g++}" >&2
+	exit 1
+fi
+
+sed -i \
+	-e "s|i386-linux-gnu-gcc|${cc}|g" \
+	-e "s|i386-linux-gnu-g++|${cxx}|g" \
+	-e "s#^  command = .*devtools/bin/vpc .*#  command = CC=${cc} CXX=${cxx} bash createallprojects ${mode}#" \
+	"$ninja_file"
+
+echo "Generated $ninja_file"
+echo "Build with: ninja -f $ninja_file"

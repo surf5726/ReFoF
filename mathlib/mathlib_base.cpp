@@ -12,6 +12,7 @@
 #include "tier0/basetypes.h"
 #include <memory.h>
 #include "tier0/dbg.h"
+#include "tier0/icommandline.h"
 
 #include "tier0/vprof.h"
 //#define _VPROF_MATHLIB

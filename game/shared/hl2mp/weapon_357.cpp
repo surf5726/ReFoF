@@ -54,7 +54,9 @@ BEGIN_PREDICTION_DATA( CWeapon357 )
 END_PREDICTION_DATA()
 
 LINK_ENTITY_TO_CLASS( weapon_357, CWeapon357 );
+#if !defined( GAME_DLL )
 PRECACHE_WEAPON_REGISTER( weapon_357 );
+#endif
 
 
 #ifndef CLIENT_DLL

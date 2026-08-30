@@ -72,6 +72,8 @@ CHudHintDisplay::CHudHintDisplay( const char *pElementName ) : BaseClass(NULL, "
 {
 	vgui::Panel *pParent = g_pClientMode->GetViewport();
 	SetParent( pParent );
+	SetPaintBackgroundEnabled( false );
+	SetPaintBorderEnabled( false );
 	SetVisible( false );
 	m_pLabel = new vgui::Label( this, "HudHintDisplayLabel", "" );
 }
@@ -103,6 +105,9 @@ void CHudHintDisplay::Reset()
 void CHudHintDisplay::ApplySchemeSettings( vgui::IScheme *pScheme )
 {
 	BaseClass::ApplySchemeSettings( pScheme );
+
+	SetPaintBackgroundEnabled( false );
+	SetPaintBorderEnabled( false );
 
 	SetFgColor( GetSchemeColor("HintMessageFg", pScheme) );
 	m_hFont = pScheme->GetFont( "HudHintText", true );

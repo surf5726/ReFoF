@@ -13,6 +13,8 @@
 #include <KeyValues.h>
 #include "filesystem.h"
 #include "iinput.h"
+#include "fof/fof_hud_menu.h"
+#include "fof/fof_weapon_activities.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -20,7 +22,132 @@
 #define HISTORY_DRAW_TIME	"5"
 
 ConVar hud_drawhistory_time( "hud_drawhistory_time", HISTORY_DRAW_TIME, 0 );
-ConVar hud_fastswitch( "hud_fastswitch", "0", FCVAR_ARCHIVE | FCVAR_ARCHIVE_XBOX );
+
+ConVar hud_fastswitch( "hud_fastswitch", "1", FCVAR_ARCHIVE | FCVAR_ARCHIVE_XBOX );
+
+int CBaseHudWeaponSelection::KeyInput(
+	int down, ButtonCode_t keynum, const char *pszCurrentBinding )
+{
+	if ( down >= 1 && pszCurrentBinding &&
+		!stricmp( pszCurrentBinding, "cancelselect" ) &&
+		FoFMenuClose() )
+	{
+		return 0;
+	}
+
+	if ( IsInSelectionMode() && pszCurrentBinding &&
+		!stricmp( pszCurrentBinding, "cancelselect" ) )
+	{
+		HideSelection();
+		return 0;
+	}
+
+	if ( down >= 1 && keynum >= KEY_0 && keynum <= KEY_9 )
+	{
+		const int slot = keynum == KEY_0 ? 0 : keynum - KEY_0;
+		if ( HandleHudMenuInput( slot ) )
+			return 0;
+	}
+
+	return 1;
+}
+
+void CBaseHudWeaponSelection::UserCmd_Slot1()
+{
+	if ( HandleHudMenuInput( 1 ) )
+		return;
+	if ( HUDTYPE_CAROUSEL == hud_fastswitch.GetInt() )
+		UserCmd_LastWeapon();
+	else
+		SelectSlot( 1 );
+}
+
+void CBaseHudWeaponSelection::UserCmd_Slot2()
+{
+	if ( HandleHudMenuInput( 2 ) )
+		return;
+	if ( HUDTYPE_CAROUSEL == hud_fastswitch.GetInt() )
+		UserCmd_NextWeapon();
+	else
+		SelectSlot( 2 );
+}
+
+void CBaseHudWeaponSelection::UserCmd_Slot3()
+{
+	if ( HandleHudMenuInput( 3 ) )
+		return;
+	if ( HUDTYPE_CAROUSEL == hud_fastswitch.GetInt() )
+		engine->ClientCmd( "phys_swap" );
+	else
+		SelectSlot( 3 );
+}
+
+void CBaseHudWeaponSelection::UserCmd_Slot4()
+{
+	if ( HandleHudMenuInput( 4 ) )
+		return;
+	if ( HUDTYPE_CAROUSEL == hud_fastswitch.GetInt() )
+		UserCmd_PrevWeapon();
+	else
+		SelectSlot( 4 );
+}
+
+bool CBaseHudWeaponSelection::IsHudMenuTakingInput()
+{
+	if ( FoFMenuIsOpen() )
+		return true;
+
+	CHudMenu *pHudMenu = GET_HUDELEMENT( CHudMenu );
+	return pHudMenu && pHudMenu->IsMenuOpen();
+}
+
+bool CBaseHudWeaponSelection::HandleHudMenuInput( int nSlot )
+{
+	if ( FoFMenuIsOpen() )
+		return FoFMenuSelectDisplaySlot( nSlot == 10 ? 0 : nSlot );
+
+	CHudMenu *pHudMenu = GET_HUDELEMENT( CHudMenu );
+	if ( !pHudMenu || !pHudMenu->IsMenuOpen() )
+		return false;
+
+	pHudMenu->SelectMenuItem( nSlot == 0 ? 10 : nSlot );
+	return true;
+}
+
+void CBaseHudWeaponSelection::SelectSlot( int nSlot )
+{
+	if ( HandleHudMenuInput( nSlot ) )
+		return;
+
+	UpdateSelectionTime();
+	SelectWeaponSlot( nSlot );
+}
+
+void CBaseHudWeaponSelection::UserCmd_Close()
+{
+	if ( FoFMenuClose() )
+		return;
+	CancelWeaponSelection();
+}
+
+void CBaseHudWeaponSelection::UserCmd_LastWeapon()
+{
+	SwitchToLastWeapon();
+}
+
+void CBaseHudWeaponSelection::SwitchToLastWeapon()
+{
+	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+	C_BaseCombatWeapon *pLastWeapon = NULL;
+	if ( pPlayer && pPlayer->IsAllowedToSwitchWeapons() )
+	{
+		pLastWeapon = pPlayer->GetLastWeapon();
+		if ( pLastWeapon == pPlayer->GetActiveWeapon() )
+			pLastWeapon = NULL;
+	}
+	if ( pLastWeapon )
+		input->MakeWeaponSelection( pLastWeapon );
+}
 
 //-----------------------------------------------------------------------------
 // Purpose: Weapon Selection commands
@@ -241,29 +368,6 @@ bool CBaseHudWeaponSelection::CanBeSelectedInHUD( C_BaseCombatWeapon *pWeapon )
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: handles keyboard input
-//-----------------------------------------------------------------------------
-int	CBaseHudWeaponSelection::KeyInput( int down, ButtonCode_t keynum, const char *pszCurrentBinding ) 
-{
-	if (IsInSelectionMode() && pszCurrentBinding && !stricmp(pszCurrentBinding, "cancelselect"))
-	{
-		HideSelection();
-		// returning 0 indicates, we've handled it, no more action needs to be taken
-		return 0;
-	}
-
-	if ( down >= 1 && keynum >= KEY_1 && keynum <= KEY_9 )
-	{
-		if ( HandleHudMenuInput( keynum - KEY_0 ) )
-			return 0;
-	}
-
-	// let someone else handle it
-	return 1;
-}
-
-
-//-----------------------------------------------------------------------------
 // Purpose: called when a weapon has been picked up
 //-----------------------------------------------------------------------------
 void CBaseHudWeaponSelection::OnWeaponPickup( C_BaseCombatWeapon *pWeapon )
@@ -280,54 +384,6 @@ void CBaseHudWeaponSelection::OnWeaponPickup( C_BaseCombatWeapon *pWeapon )
 //------------------------------------------------------------------------
 // Command Handlers
 //------------------------------------------------------------------------
-void CBaseHudWeaponSelection::UserCmd_Slot1(void)
-{
-	if( HUDTYPE_CAROUSEL == hud_fastswitch.GetInt() )
-	{
-		UserCmd_LastWeapon();
-	}
-	else
-	{
-		SelectSlot( 1 );
-	}
-}
-
-void CBaseHudWeaponSelection::UserCmd_Slot2(void)
-{
-	if( HUDTYPE_CAROUSEL == hud_fastswitch.GetInt() )
-	{
-		UserCmd_NextWeapon();
-	}
-	else
-	{
-		SelectSlot( 2 );
-	}
-}
-
-void CBaseHudWeaponSelection::UserCmd_Slot3(void)
-{
-	if( HUDTYPE_CAROUSEL == hud_fastswitch.GetInt() )
-	{
-		engine->ClientCmd( "phys_swap" );
-	}
-	else
-	{
-		SelectSlot( 3 );
-	}
-}
-
-void CBaseHudWeaponSelection::UserCmd_Slot4(void)
-{
-	if( HUDTYPE_CAROUSEL == hud_fastswitch.GetInt() )
-	{
-		UserCmd_PrevWeapon();
-	}
-	else
-	{
-		SelectSlot( 4 );
-	}
-}
-
 void CBaseHudWeaponSelection::UserCmd_Slot5(void)
 {
 	SelectSlot( 5 );
@@ -364,29 +420,6 @@ void CBaseHudWeaponSelection::UserCmd_Slot10(void)
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: returns true if the CHudMenu should take slot1, etc commands
-//-----------------------------------------------------------------------------
-bool CBaseHudWeaponSelection::IsHudMenuTakingInput()
-{
-	CHudMenu *pHudMenu = GET_HUDELEMENT( CHudMenu );
-	return ( pHudMenu && pHudMenu->IsMenuOpen() );
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: returns true if the CHudMenu handles the slot command
-//-----------------------------------------------------------------------------
-bool CBaseHudWeaponSelection::HandleHudMenuInput( int iSlot )
-{
-	CHudMenu *pHudMenu = GET_HUDELEMENT( CHudMenu );
-	if ( !pHudMenu || !pHudMenu->IsMenuOpen() )
-		return false;
-
-	pHudMenu->SelectMenuItem( iSlot );
-
-	return true;
-}
-
-//-----------------------------------------------------------------------------
 // Purpose: returns true if the weapon selection hud should be hidden because
 //          the CHudMenu is open
 //-----------------------------------------------------------------------------
@@ -398,35 +431,6 @@ bool CBaseHudWeaponSelection::IsHudMenuPreventingWeaponSelection()
 		return true;
 
 	return IsHudMenuTakingInput();
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: Menu Selection Code
-//-----------------------------------------------------------------------------
-void CBaseHudWeaponSelection::SelectSlot( int iSlot )
-{
-	// A menu may be overriding weapon selection commands
-	if ( HandleHudMenuInput( iSlot ) )
-	{
-		return;
-	}
-
-	// If we're not allowed to draw, ignore weapon selections
-	if ( !BaseClass::ShouldDraw() )
-	{
-		return;
-	}
-
-	UpdateSelectionTime();
-	SelectWeaponSlot( iSlot );
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: Close the weapon selection
-//-----------------------------------------------------------------------------
-void CBaseHudWeaponSelection::UserCmd_Close(void)
-{
-	CancelWeaponSelection();
 }
 
 //-----------------------------------------------------------------------------
@@ -463,38 +467,6 @@ void CBaseHudWeaponSelection::UserCmd_PrevWeapon(void)
 	}
 
 	UpdateSelectionTime();
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: Switches the last weapon the player was using
-//-----------------------------------------------------------------------------
-void CBaseHudWeaponSelection::UserCmd_LastWeapon(void)
-{
-	// If we're not allowed to draw, ignore weapon selections
-	if ( !BaseClass::ShouldDraw() )
-		return;
-
-	/*
-	if ( IsHudMenuPreventingWeaponSelection() )	
-	{ 
-		return;
-	}
-	*/
-
-	SwitchToLastWeapon();
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: Switches the last weapon the player was using
-//-----------------------------------------------------------------------------
-void CBaseHudWeaponSelection::SwitchToLastWeapon( void )
-{
-	// Get the player's last weapon
-	C_BasePlayer *player = C_BasePlayer::GetLocalPlayer();
-	if ( !player )
-		return;
-
-	input->MakeWeaponSelection( player->GetLastWeapon() );
 }
 
 //-----------------------------------------------------------------------------

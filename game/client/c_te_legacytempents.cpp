@@ -35,6 +35,7 @@
 #include "c_te_effect_dispatch.h"
 #include "c_props.h"
 #include "c_basedoor.h"
+#include "fof/fof_combat_effects.h"
 
 // NOTE: Always include this last!
 #include "tier0/memdbgon.h"
@@ -1655,7 +1656,7 @@ void CTempEnts::EjectBrass( const Vector &pos1, const QAngle &angles, const QAng
 		return;
 
 	//Keep track of shell type
-	if ( type == 2 )
+	if ( type >= 2 )
 	{
 		pTemp->hitSound = BOUNCE_SHOTSHELL;
 	}
@@ -2405,6 +2406,7 @@ void CTempEnts::LevelInit()
 	m_pShells[0] = (model_t *) engine->LoadModel( "models/weapons/shell.mdl" );
 	m_pShells[1] = (model_t *) engine->LoadModel( "models/weapons/rifleshell.mdl" );
 	m_pShells[2] = (model_t *) engine->LoadModel( "models/weapons/shotgun_shell.mdl" );
+	m_pShells[3] = (model_t *) engine->LoadModel( "models/weapons/shotgun_shell2.mdl" );
 #endif
 
 #if defined( HL1_CLIENT_DLL )
@@ -2443,6 +2445,7 @@ void CTempEnts::Init (void)
 	m_pShells[0] = NULL;
 	m_pShells[1] = NULL;
 	m_pShells[2] = NULL;
+	m_pShells[3] = NULL;
 
 #if defined( HL1_CLIENT_DLL )
 	m_pHL1Shell			= NULL;
@@ -2871,6 +2874,9 @@ void CTempEnts::MuzzleFlash_SMG1_Player( ClientEntityHandle_t hEntity, int attac
 void CTempEnts::MuzzleFlash_Shotgun_Player( ClientEntityHandle_t hEntity, int attachmentIndex )
 {
 	VPROF_BUDGET( "MuzzleFlash_Shotgun_Player", VPROF_BUDGETGROUP_PARTICLE_RENDERING );
+	FoFDispatchLegacyMuzzleParticle(
+		FOF_MUZZLE_PARTICLE_SHOTGUN, true, hEntity, attachmentIndex );
+
 	CSmartPtr<CSimpleEmitter> pSimple = CSimpleEmitter::Create( "MuzzleFlash_Shotgun_Player" );
 
 	pSimple->SetDrawBeforeViewModel( true );
@@ -2929,6 +2935,9 @@ void CTempEnts::MuzzleFlash_Shotgun_Player( ClientEntityHandle_t hEntity, int at
 
 void CTempEnts::MuzzleFlash_Shotgun_NPC( ClientEntityHandle_t hEntity, int attachmentIndex )
 {
+	FoFDispatchLegacyMuzzleParticle(
+		FOF_MUZZLE_PARTICLE_SHOTGUN, false, hEntity, attachmentIndex );
+
 	//Draw the cloud of fire
 	FX_MuzzleEffectAttached( 0.75f, hEntity, attachmentIndex );
 
@@ -3044,6 +3053,9 @@ void CTempEnts::MuzzleFlash_Shotgun_NPC( ClientEntityHandle_t hEntity, int attac
 void CTempEnts::MuzzleFlash_357_Player( ClientEntityHandle_t hEntity, int attachmentIndex )
 {
 	VPROF_BUDGET( "MuzzleFlash_357_Player", VPROF_BUDGETGROUP_PARTICLE_RENDERING );
+	FoFDispatchLegacyMuzzleParticle(
+		FOF_MUZZLE_PARTICLE_REVOLVER, true, hEntity, attachmentIndex );
+
 	CSmartPtr<CSimpleEmitter> pSimple = CSimpleEmitter::Create( "MuzzleFlash_357_Player" );
 
 	pSimple->SetDrawBeforeViewModel( true );
@@ -3131,6 +3143,9 @@ void CTempEnts::MuzzleFlash_357_Player( ClientEntityHandle_t hEntity, int attach
 void CTempEnts::MuzzleFlash_Pistol_Player( ClientEntityHandle_t hEntity, int attachmentIndex )
 {
 	VPROF_BUDGET( "MuzzleFlash_Pistol_Player", VPROF_BUDGETGROUP_PARTICLE_RENDERING );
+	FoFDispatchLegacyMuzzleParticle(
+		FOF_MUZZLE_PARTICLE_REVOLVER, true, hEntity, attachmentIndex );
+
 	CSmartPtr<CSimpleEmitter> pSimple = CSimpleEmitter::Create( "MuzzleFlash_Pistol_Player" );
 	pSimple->SetDrawBeforeViewModel( true );
 
@@ -3219,6 +3234,9 @@ void CTempEnts::MuzzleFlash_Pistol_Player( ClientEntityHandle_t hEntity, int att
 
 void CTempEnts::MuzzleFlash_Pistol_NPC( ClientEntityHandle_t hEntity, int attachmentIndex )
 {
+	FoFDispatchLegacyMuzzleParticle(
+		FOF_MUZZLE_PARTICLE_REVOLVER, false, hEntity, attachmentIndex );
+
 	FX_MuzzleEffectAttached( 0.5f, hEntity, attachmentIndex, NULL, true );
 }
 
@@ -3436,4 +3454,3 @@ void CTempEnts::CSEjectBrass( const Vector &vecPosition, const QAngle &angVeloci
 
 	
 }
-

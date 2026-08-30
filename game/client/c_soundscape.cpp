@@ -15,6 +15,7 @@
 #include "view.h"
 #include "engine/ivdebugoverlay.h"
 #include "tier0/icommandline.h"
+#include "fof/fof_audio.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -732,7 +733,9 @@ void C_SoundscapeSystem::ProcessPlayLooping( KeyValues *pAmbient, const subsound
 	{
 		if ( !Q_strcasecmp( pKey->GetName(), "volume" ) )
 		{
-			volume = params.masterVolume * RandomInterval( ReadInterval( pKey->GetString() ) );
+			volume = FoFSanitizeSoundscapeVolume(
+				params.masterVolume * RandomInterval(
+					FoFReadSoundscapeVolumeInterval( pKey->GetString() ) ) );
 		}
 		else if ( !Q_strcasecmp( pKey->GetName(), "pitch" ) )
 		{
@@ -914,7 +917,8 @@ void C_SoundscapeSystem::ProcessPlayRandom( KeyValues *pPlayRandom, const subsou
 	{
 		if ( !Q_strcasecmp( pKey->GetName(), "volume" ) )
 		{
-			sound.volume = ReadInterval( pKey->GetString() );
+			sound.volume =
+				FoFReadSoundscapeVolumeInterval( pKey->GetString() );
 		}
 		else if ( !Q_strcasecmp( pKey->GetName(), "pitch" ) )
 		{
@@ -1039,7 +1043,9 @@ void C_SoundscapeSystem::ProcessPlaySoundscape( KeyValues *pPlaySoundscape, subs
 	{
 		if ( !Q_strcasecmp( pKey->GetName(), "volume" ) )
 		{
-			subParams.masterVolume = paramsIn.masterVolume * RandomInterval( ReadInterval( pKey->GetString() ) );
+			subParams.masterVolume = FoFSanitizeSoundscapeVolume(
+				paramsIn.masterVolume * RandomInterval(
+					FoFReadSoundscapeVolumeInterval( pKey->GetString() ) ) );
 		}
 		else if ( !Q_strcasecmp( pKey->GetName(), "position" ) )
 		{
@@ -1102,6 +1108,8 @@ int C_SoundscapeSystem::AddLoopingAmbient( const char *pSoundName, float volume,
 //		this prevents pops
 int C_SoundscapeSystem::AddLoopingSound( const char *pSoundName, bool isAmbient, float volume, soundlevel_t soundlevel, int pitch, const Vector &position )
 {
+	volume = FoFSanitizeSoundscapeVolume( volume );
+
 	loopingsound_t *pSoundSlot = NULL;
 	int soundSlot = m_loopingSounds.Count() - 1;
 	bool bForceSoundUpdate = false;
@@ -1262,9 +1270,13 @@ void C_SoundscapeSystem::PlayRandomSound( randomsound_t &sound )
 	if ( !pWaveName )
 		return;
 
+	const float flVolume = FoFSanitizeSoundscapeVolume(
+		sound.masterVolume * RandomInterval( sound.volume ) );
+
 	if ( sound.isAmbient )
 	{
-		enginesound->EmitAmbientSound( pWaveName, sound.masterVolume * RandomInterval( sound.volume ), (int)RandomInterval( sound.pitch ) );
+		enginesound->EmitAmbientSound(
+			pWaveName, flVolume, (int)RandomInterval( sound.pitch ) );
 	}
 	else
 	{
@@ -1273,7 +1285,7 @@ void C_SoundscapeSystem::PlayRandomSound( randomsound_t &sound )
 		EmitSound_t ep;
 		ep.m_nChannel = CHAN_STATIC;
 		ep.m_pSoundName =  pWaveName;
-		ep.m_flVolume = sound.masterVolume * RandomInterval( sound.volume );
+		ep.m_flVolume = flVolume;
 		ep.m_SoundLevel = (soundlevel_t)(int)RandomInterval( sound.soundlevel );
 		ep.m_nPitch = (int)RandomInterval( sound.pitch );
 		if ( sound.isRandom )

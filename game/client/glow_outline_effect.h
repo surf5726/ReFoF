@@ -117,7 +117,12 @@ public:
 
 private:
 
-	void RenderGlowModels( const CViewSetup *pSetup, int nSplitScreenSlot, CMatRenderContextPtr &pRenderContext );
+	void RenderGlowModelsWhenUnoccluded( int nSplitScreenSlot,
+		CMatRenderContextPtr &pRenderContext );
+	void RenderGlowModelsWhenOccluded( int nSplitScreenSlot,
+		CMatRenderContextPtr &pRenderContext );
+	void RenderGlowModelsWhenOccludedAndUnoccluded( int nSplitScreenSlot,
+		CMatRenderContextPtr &pRenderContext );
 	void ApplyEntityGlowEffects( const CViewSetup *pSetup, int nSplitScreenSlot, CMatRenderContextPtr &pRenderContext, float flBloomScale, int x, int y, int w, int h );
 
 	struct GlowObjectDefinition_t

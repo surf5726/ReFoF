@@ -25,7 +25,9 @@
 ConVar DrawBattleLines( "ai_drawbattlelines", "0", FCVAR_CHEAT );
 
 
-static AI_StandoffParams_t AI_DEFAULT_STANDOFF_PARAMS = { AIHCR_MOVE_ON_COVER, true, 1.5, 2.5, 1, 3, 25, 0 };
+// Preserve the old aggregate initializer's implicit conversions explicitly.
+static AI_StandoffParams_t AI_DEFAULT_STANDOFF_PARAMS =
+	{ AIHCR_MOVE_ON_COVER, true, true, 2.5f, 1.0f, 3, 25, 0, false, 0.0f };
 
 #define MAKE_ACTMAP_KEY( posture, activity ) ( (((unsigned)(posture)) << 16) | ((unsigned)(activity)) )
 

@@ -69,6 +69,9 @@
 #include "dt_utlvector_send.h"
 #include "vote_controller.h"
 #include "ai_speech.h"
+#include "fof/fof_player.h"
+#include "fof/fof_player_shared.h"
+#include "inetchannelinfo.h"
 
 #if defined USES_ECON_ITEMS
 #include "econ_wearable.h"
@@ -107,10 +110,10 @@ bool IsInCommentaryMode( void );
 bool IsListeningToCommentary( void );
 
 #if !defined( CSTRIKE_DLL )
-ConVar cl_sidespeed( "cl_sidespeed", "450", FCVAR_REPLICATED | FCVAR_CHEAT );
+ConVar cl_sidespeed( "cl_sidespeed", "400", FCVAR_REPLICATED | FCVAR_CHEAT );
 ConVar cl_upspeed( "cl_upspeed", "320", FCVAR_REPLICATED | FCVAR_CHEAT );
-ConVar cl_forwardspeed( "cl_forwardspeed", "450", FCVAR_REPLICATED | FCVAR_CHEAT );
-ConVar cl_backspeed( "cl_backspeed", "450", FCVAR_REPLICATED | FCVAR_CHEAT );
+ConVar cl_forwardspeed( "cl_forwardspeed", "400", FCVAR_REPLICATED | FCVAR_CHEAT );
+ConVar cl_backspeed( "cl_backspeed", "400", FCVAR_REPLICATED | FCVAR_CHEAT );
 #endif // CSTRIKE_DLL
 
 // This is declared in the engine, too
@@ -183,7 +186,7 @@ ConVar	sk_player_stomach( "sk_player_stomach","1" );
 ConVar	sk_player_arm( "sk_player_arm","1" );
 ConVar	sk_player_leg( "sk_player_leg","1" );
 
-//ConVar	player_usercommand_timeout( "player_usercommand_timeout", "10", 0, "After this many seconds without a usercommand from a player, the client is kicked." );
+extern ConVar player_usercommand_timeout;
 #ifdef _DEBUG
 ConVar  sv_player_net_suppress_usercommands( "sv_player_net_suppress_usercommands", "0", FCVAR_CHEAT, "For testing usercommand hacking sideeffects. DO NOT SHIP" );
 #endif // _DEBUG
@@ -408,6 +411,18 @@ BEGIN_DATADESC( CBasePlayer )
 	DEFINE_AUTO_ARRAY( m_rgbTimeBasedDamage, FIELD_CHARACTER ),
 	DEFINE_FIELD( m_fLastPlayerTalkTime, FIELD_FLOAT ),
 	DEFINE_FIELD( m_hLastWeapon, FIELD_EHANDLE ),
+#if defined( HL2MP )
+	DEFINE_FIELD( m_hLastWeapon2, FIELD_EHANDLE ),
+	DEFINE_FIELD( m_flSlideForce, FIELD_FLOAT ),
+	DEFINE_FIELD( m_flJWallForce, FIELD_FLOAT ),
+	DEFINE_FIELD( m_bOnHorse, FIELD_BOOLEAN ),
+	DEFINE_FIELD( m_flHorseAcc, FIELD_FLOAT ),
+	DEFINE_FIELD( consecutiveJumps, FIELD_FLOAT ),
+	DEFINE_FIELD( m_flKickTime, FIELD_TIME ),
+	DEFINE_FIELD( m_flKickedPenaltyTime, FIELD_TIME ),
+	DEFINE_FIELD( m_vecSlide, FIELD_VECTOR ),
+	DEFINE_FIELD( m_angSlideView, FIELD_VECTOR ),
+#endif
 
 #if !defined( NO_ENTITY_PREDICTION )
 	// DEFINE_FIELD( m_SimulatedByThisPlayer, CUtlVector < CHandle < CBaseEntity > > ),
@@ -580,6 +595,21 @@ CBasePlayer::CBasePlayer( )
 
 	m_iHealth = 0;
 	Weapon_SetLast( NULL );
+#if defined( HL2MP )
+	Weapon_SetLast2( NULL );
+	m_flHorseAcc = 0.75f;
+	m_nFoFReservedE44 = 0;
+	m_nFoFReservedE48 = 0;
+	m_nFoFUserCmdInputBudget = 0;
+	m_flSlideForce = 0.0f;
+	m_flJWallForce = 0.0f;
+	m_bOnHorse = false;
+	consecutiveJumps = 0.0f;
+	m_flKickTime = 0.0f;
+	m_flKickedPenaltyTime = 0.0f;
+	m_vecSlide.Init();
+	m_angSlideView.Init();
+#endif
 	m_bitsDamageType = 0;
 
 	m_bForceOrigin = false;
@@ -645,6 +675,111 @@ CBasePlayer::~CBasePlayer( )
 {
 	VPhysicsDestroyObject();
 }
+
+bool CBasePlayer::HasForcedOrigin( void ) const
+{
+	return m_bForceOrigin;
+}
+
+#if defined( HL2MP )
+void CBasePlayer::NetworkStateChanged_m_iAmmo( void )
+{
+	CHECK_USENETWORKVARS NetworkStateChanged();
+}
+
+void CBasePlayer::NetworkStateChanged_m_iAmmo( void *pVar )
+{
+	CHECK_USENETWORKVARS NetworkStateChanged( pVar );
+}
+
+void CBasePlayer::NetworkStateChanged_m_ArmorValue( void *pVar )
+{
+	(void)pVar;
+}
+
+void CBasePlayer::Weapon_SetLast2( CBaseCombatWeapon *pWeapon )
+{
+	m_hLastWeapon2 = pWeapon;
+}
+
+CBaseCombatWeapon *CBasePlayer::GetLastWeapon2( void )
+{
+	return m_hLastWeapon2.Get();
+}
+
+void CBasePlayer::SetPlayerModel( void )
+{
+}
+
+bool CBasePlayer::FoFIsReloading( void )
+{
+	return false;
+}
+
+int CBasePlayer::GetFoFTotalNotoriety( void )
+{
+	return 0;
+}
+
+bool CBasePlayer::IsOnFoFHorse() const
+{
+	return m_bOnHorse;
+}
+
+void CBasePlayer::SetFoFOnHorse( bool bOnHorse )
+{
+	m_bOnHorse = bOnHorse;
+}
+
+float CBasePlayer::GetFoFHorseAcceleration() const
+{
+	return m_flHorseAcc;
+}
+
+void CBasePlayer::SetFoFHorseAcceleration( float flAcceleration )
+{
+	m_flHorseAcc = flAcceleration;
+}
+
+float CBasePlayer::GetFoFSlideForce() const
+{
+	return m_flSlideForce;
+}
+
+float CBasePlayer::GetFoFPainFinishedTime() const
+{
+	return m_PainFinished;
+}
+
+float CBasePlayer::GetFoFKickTime() const
+{
+	return m_flKickTime;
+}
+
+void CBasePlayer::SetFoFKickTime( float flTime )
+{
+	m_flKickTime = flTime;
+}
+
+float CBasePlayer::GetFoFKickedPenaltyTime() const
+{
+	return m_flKickedPenaltyTime;
+}
+
+void CBasePlayer::SetFoFKickedPenaltyTime( float flTime )
+{
+	m_flKickedPenaltyTime = flTime;
+}
+
+bool CBasePlayer::CanPlayerTalk()
+{
+	return LastTimePlayerTalked() + 0.66f < gpGlobals->curtime;
+}
+
+void CBasePlayer::OnVoiceTransmit( void )
+{
+}
+#endif
 
 //-----------------------------------------------------------------------------
 // Purpose: 
@@ -1546,10 +1681,15 @@ void CBasePlayer::PackDeadPlayerItems( void )
 
 void CBasePlayer::RemoveAllItems( bool removeSuit )
 {
-	if (GetActiveWeapon())
+	CBaseCombatWeapon *pActiveWeapon1 = GetActiveWeapon1();
+	CBaseCombatWeapon *pActiveWeapon2 = GetActiveWeapon2();
+	if ( pActiveWeapon1 || pActiveWeapon2 )
 	{
 		ResetAutoaim( );
-		GetActiveWeapon()->Holster( );
+		if ( pActiveWeapon1 )
+			pActiveWeapon1->Holster( );
+		if ( pActiveWeapon2 && pActiveWeapon2 != pActiveWeapon1 )
+			pActiveWeapon2->Holster( );
 	}
 
 	Weapon_SetLast( NULL );
@@ -1561,6 +1701,8 @@ void CBasePlayer::RemoveAllItems( bool removeSuit )
 		RemoveSuit();
 	}
 
+	SetActiveWeapon1( NULL );
+	SetActiveWeapon2( NULL );
 	UpdateClientData();
 }
 
@@ -1608,7 +1750,8 @@ int CBasePlayer::OnTakeDamage_Alive( const CTakeDamageInfo &info )
 		VectorNormalize( vecDir );
 	}
 
-	if ( info.GetInflictor() && (GetMoveType() == MOVETYPE_WALK) && 
+#if !defined( HL2MP )
+	if ( info.GetInflictor() && (GetMoveType() == MOVETYPE_WALK) &&
 		( !attacker->IsSolidFlagSet(FSOLID_TRIGGER)) )
 	{
 		Vector force = vecDir * -DamageForce( WorldAlignSize(), info.GetBaseDamage() );
@@ -1618,6 +1761,7 @@ int CBasePlayer::OnTakeDamage_Alive( const CTakeDamageInfo &info )
 		}
 		ApplyAbsVelocityImpulse( force );
 	}
+#endif
 
 	// fire global game event
 
@@ -3387,20 +3531,16 @@ void CBasePlayer::PhysicsSimulate( void )
 	gpGlobals->curtime		= savetime;
 	gpGlobals->frametime	= saveframetime;	
 
-// 	// Kick the player if they haven't sent a user command in awhile in order to prevent clients
-// 	// from using packet-level manipulation to mess with gamestate.  Not sending usercommands seems
-// 	// to have all kinds of bad effects, such as stalling a bunch of Think()'s and gamestate handling.
-// 	// An example from TF: A medic stops sending commands after deploying an uber on another player.
-// 	// As a result, invuln is permanently on the heal target because the maintenance code is stalled.
-// 	if ( GetTimeSinceLastUserCommand() > player_usercommand_timeout.GetFloat() )
-// 	{
-// 		// If they have an active netchan, they're almost certainly messing with usercommands?
-// 		INetChannelInfo *pNetChanInfo = engine->GetPlayerNetInfo( entindex() );
-// 		if ( pNetChanInfo && pNetChanInfo->GetTimeSinceLastReceived() < 5.f )
-// 		{
-// 			engine->ServerCommand( UTIL_VarArgs( "kickid %d %s\n", GetUserID(), "UserCommand Timeout" ) );
-// 		}
-// 	}
+	const float flTimeout = player_usercommand_timeout.GetFloat();
+	if ( flTimeout > 0.0f && GetTimeSinceLastUserCommand() > flTimeout )
+	{
+		INetChannelInfo *pNetChannel = engine->GetPlayerNetInfo( entindex() );
+		if ( pNetChannel && pNetChannel->GetTimeSinceLastReceived() < 5.0f )
+		{
+			engine->ServerCommand( UTIL_VarArgs(
+				"kickid %d %s\n", GetUserID(), "UserCommand Timeout" ) );
+		}
+	}
 }
 
 unsigned int CBasePlayer::PhysicsSolidMaskForEntity() const
@@ -3437,6 +3577,24 @@ void CBasePlayer::ProcessUsercmds( CUserCmd *cmds, int numcmds, int totalcmds,
 	for ( i = totalcmds - 1; i >= 0; i-- )
 	{
 		CUserCmd *pCmd = &cmds[totalcmds - 1 - i];
+
+#if defined( HL2MP )
+		if ( i < numcmds )
+		{
+			if ( m_nFoFUserCmdInputBudget > 0 )
+			{
+				--m_nFoFUserCmdInputBudget;
+			}
+			else
+			{
+				pCmd->forwardmove = 0.0f;
+				pCmd->sidemove = 0.0f;
+				pCmd->upmove = 0.0f;
+				pCmd->buttons = 0;
+				pCmd->impulse = 0;
+			}
+		}
+#endif
 
 		// Validate values
 		if ( !IsUserCmdDataValid( pCmd ) )
@@ -4518,6 +4676,11 @@ void CBasePlayer::ForceOrigin( const Vector &vecOrigin )
 //-----------------------------------------------------------------------------
 void CBasePlayer::PostThink()
 {
+#if defined( HL2MP )
+	if ( m_nFoFUserCmdInputBudget < 20 )
+		++m_nFoFUserCmdInputBudget;
+#endif
+
 	m_vecSmoothedVelocity = m_vecSmoothedVelocity * SMOOTHING_FACTOR + GetAbsVelocity() * ( 1 - SMOOTHING_FACTOR );
 
 	if ( !g_fGameOver && !m_iPlayerLocked )
@@ -4968,7 +5131,9 @@ void CBasePlayer::Spawn( void )
 	if ( !m_fGameHUDInitialized )
 		g_pGameRules->SetDefaultPlayerTeam( this );
 
-	g_pGameRules->GetPlayerSpawnSpot( this );
+#if !defined( HL2MP )
+		g_pGameRules->GetPlayerSpawnSpot( this );
+#endif
 
 	m_Local.m_bDucked = false;// This will persist over round restart if you hold duck otherwise. 
 	m_Local.m_bDucking = false;
@@ -5059,6 +5224,10 @@ void CBasePlayer::Spawn( void )
 	UpdateLastKnownArea();
 
 	m_weaponFiredTimer.Invalidate();
+
+#if defined( HL2MP )
+	m_nFoFUserCmdInputBudget = 20;
+#endif
 }
 
 void CBasePlayer::Activate( void )
@@ -5072,6 +5241,10 @@ void CBasePlayer::Activate( void )
 	// Reset the analog bias. If the player is in a vehicle when the game
 	// reloads, it will autosense and apply the correct bias.
 	m_iVehicleAnalogBias = VEHICLE_ANALOG_BIAS_NONE;
+
+#if defined( HL2MP )
+	m_nFoFUserCmdInputBudget = 20;
+#endif
 }
 
 void CBasePlayer::Precache( void )
@@ -5676,10 +5849,6 @@ void CBloodSplat::Think( void )
 //-----------------------------------------------------------------------------
 CBaseEntity	*CBasePlayer::GiveNamedItem( const char *pszName, int iSubType )
 {
-	// If I already own this type don't create one
-	if ( Weapon_OwnsThisType(pszName, iSubType) )
-		return NULL;
-
 	// Msg( "giving %s\n", pszName );
 
 	EHANDLE pent;
@@ -6672,7 +6841,11 @@ bool CBasePlayer::BumpWeapon( CBaseCombatWeapon *pWeapon )
 
 bool CBasePlayer::RemovePlayerItem( CBaseCombatWeapon *pItem )
 {
-	if (GetActiveWeapon() == pItem)
+#if defined( HL2MP )
+	if ( GetActiveWeapon() == pItem || GetActiveWeapon2() == pItem )
+#else
+	if ( GetActiveWeapon() == pItem )
+#endif
 	{
 		ResetAutoaim( );
 		pItem->Holster( );
@@ -6848,10 +7021,12 @@ void CBasePlayer::UpdateClientData( void )
 			GetWeapon(i)->UpdateClientData( this );
 	}
 
+#if !defined( HL2MP )
 	// update the client with our poison state
-	m_Local.m_bPoisoned = ( m_bitsDamageType & DMG_POISON ) 
-						&& ( m_nPoisonDmg > m_nPoisonRestored ) 
+	m_Local.m_bPoisoned = ( m_bitsDamageType & DMG_POISON )
+						&& ( m_nPoisonDmg > m_nPoisonRestored )
 						&& ( m_iHealth < 100 );
+#endif
 
 	// Check if the bonus progress HUD element should be displayed
 	if ( m_iBonusChallenge == 0 && m_iBonusProgress == 0 && !( m_Local.m_iHideHUD & HIDEHUD_BONUS_PROGRESS ) )
@@ -7289,33 +7464,15 @@ bool CBasePlayer::Weapon_CanUse( CBaseCombatWeapon *pWeapon )
 //-----------------------------------------------------------------------------
 void CBasePlayer::Weapon_Drop( CBaseCombatWeapon *pWeapon, const Vector *pvecTarget /* = NULL */, const Vector *pVelocity /* = NULL */ )
 {
-	bool bWasActiveWeapon = false;
-	if ( pWeapon == GetActiveWeapon() )
-	{
-		bWasActiveWeapon = true;
-	}
+	const bool bWasActiveWeapon =
+		pWeapon == GetActiveWeapon() || pWeapon == GetActiveWeapon2();
 
-	if ( pWeapon )
+	if ( pWeapon && bWasActiveWeapon )
 	{
-		if ( bWasActiveWeapon )
-		{
-			pWeapon->SendWeaponAnim( ACT_VM_IDLE );
-		}
+		pWeapon->SendWeaponAnim( ACT_VM_IDLE );
 	}
 
 	BaseClass::Weapon_Drop( pWeapon, pvecTarget, pVelocity );
-
-	if ( bWasActiveWeapon )
-	{
-		if (!SwitchToNextBestWeapon( NULL ))
-		{
-			CBaseViewModel *vm = GetViewModel();
-			if ( vm )
-			{
-				vm->AddEffects( EF_NODRAW );
-			}
-		}
-	}
 }
 
 //-----------------------------------------------------------------------------
@@ -7955,6 +8112,9 @@ void SendProxy_CropFlagsToPlayerFlagBitsLength( const SendProp *pProp, const voi
 		SendPropInt			( SENDINFO( m_nNextThinkTick ) ),
 
 		SendPropEHandle		( SENDINFO( m_hLastWeapon ) ),
+#if defined( HL2MP )
+		SendPropEHandle		( SENDINFO( m_hLastWeapon2 ) ),
+#endif
 		SendPropEHandle		( SENDINFO( m_hGroundEntity ), SPROP_CHANGES_OFTEN ),
 
 		SendPropFloat		( SENDINFO_VECTORELEM(m_vecVelocity, 0), 32, SPROP_NOSCALE|SPROP_CHANGES_OFTEN ),
@@ -7976,7 +8136,16 @@ void SendProxy_CropFlagsToPlayerFlagBitsLength( const SendProp *pProp, const voi
 		SendPropFloat		( SENDINFO( m_flDeathTime ), 0, SPROP_NOSCALE ),
 
 		SendPropInt			( SENDINFO( m_nWaterLevel ), 2, SPROP_UNSIGNED ),
+#if defined( HL2MP )
+		SendPropFloat		( SENDINFO( consecutiveJumps ), 0, SPROP_NOSCALE ),
+		SendPropFloat		( SENDINFO( m_flKickTime ), 0, SPROP_NOSCALE ),
+		SendPropFloat		( SENDINFO( m_flKickedPenaltyTime ), 0, SPROP_NOSCALE ),
+#endif
 		SendPropFloat		( SENDINFO( m_flLaggedMovementValue ), 0, SPROP_NOSCALE ),
+#if defined( HL2MP )
+		SendPropVector		( SENDINFO( m_vecSlide ), 0, SPROP_NOSCALE ),
+		SendPropQAngles		( SENDINFO( m_angSlideView ), 10 ),
+#endif
 
 	END_SEND_TABLE()
 
@@ -8014,6 +8183,13 @@ void SendProxy_CropFlagsToPlayerFlagBitsLength( const SendProp *pProp, const voi
 		SendPropEHandle	(SENDINFO(m_hZoomOwner) ),
 		SendPropArray	( SendPropEHandle( SENDINFO_ARRAY( m_hViewModel ) ), m_hViewModel ),
 		SendPropString	(SENDINFO(m_szLastPlaceName) ),
+
+#if defined( HL2MP )
+		SendPropFloat	( SENDINFO( m_flSlideForce ), 0, SPROP_NOSCALE ),
+		SendPropFloat	( SENDINFO( m_flJWallForce ), 0, SPROP_NOSCALE ),
+		SendPropBool	( SENDINFO( m_bOnHorse ) ),
+		SendPropFloat	( SENDINFO( m_flHorseAcc ), 0, SPROP_NOSCALE ),
+#endif
 
 #if defined USES_ECON_ITEMS
 		SendPropUtlVector( SENDINFO_UTLVECTOR( m_hMyWearables ), MAX_WEARABLES_SENT_FROM_SERVER, SendPropEHandle( NULL, 0 ) ),

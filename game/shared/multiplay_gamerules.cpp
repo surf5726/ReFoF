@@ -52,7 +52,7 @@ REGISTER_GAMERULES_CLASS( CMultiplayRules );
 
 ConVar mp_chattime(
 		"mp_chattime", 
-		"10", 
+		"15",
 		FCVAR_REPLICATED,
 		"amount of time players can chat after the game is over",
 		true, 1,

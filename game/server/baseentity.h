@@ -530,7 +530,12 @@ public:
 
 public:
 
+	// FoF server ABI: SetModel, GetTracerType, Spawn, Precache,
+	// OnNewModel, PostClientActive.  The order differs from the SDK 2013
+	// header and is inherited by every server entity.
+	virtual void SetModel( const char *szModelName );
 	virtual const char	*GetTracerType( void );
+	virtual void Spawn( void );
 
 	// returns a pointer to the entities edict, if it has one.  should be removed!
 	inline edict_t			*edict( void )			{ return NetworkProp()->edict(); }
@@ -545,10 +550,7 @@ public:
 	CBaseEntity *GetFollowedEntity();
 
 	// initialization
-	virtual void Spawn( void );
 	virtual void Precache( void ) {}
-
-	virtual void SetModel( const char *szModelName );
 
 protected:
 	// Notification on model load. May be called multiple times for dynamic models.
@@ -556,7 +558,8 @@ protected:
 	virtual CStudioHdr *OnNewModel();
 
 public:
-	virtual void PostConstructor( const char *szClassname );
+	// Entity factories call this directly; FoF does not expose a virtual slot.
+	void PostConstructor( const char *szClassname );
 	virtual void PostClientActive( void );
 	virtual void ParseMapData( CEntityMapData *mapData );
 	virtual bool KeyValue( const char *szKeyName, const char *szValue );
@@ -584,6 +587,7 @@ public:
 	// are relative to the attachment on this entity. If iAttachment == -1, it'll preserve the
 	// current m_iParentAttachment.
 	virtual void	SetParent( CBaseEntity* pNewParent, int iAttachment = -1 );
+	virtual void	SetClassname( const char *className );
 	CBaseEntity* GetParent();
 	int			GetParentAttachment();
 
@@ -675,7 +679,6 @@ public:
 	bool ReadKeyField( const char *varName, variant_t *var );
 
 	// classname access
-	void		SetClassname( const char *className );
 	const char* GetClassname();
 
 	// Debug Overlays
@@ -1403,6 +1406,11 @@ public:
 
 	// Force a non-solid (ie. solid_trigger) physics object to collide with other entities.
 	virtual bool	ForceVPhysicsCollide( CBaseEntity *pEntity ) { return false; }
+
+	// FoF inserts a one-argument, default-true virtual at this exact
+	// position.  The shipped server has no overrides or call sites for it, but
+	// the slot is required to keep every following CBaseEntity virtual aligned.
+	virtual bool	FoFPhysicsCompatibilitySlot( CBaseEntity *pEntity );
 
 private:
 	// called by all vphysics inits

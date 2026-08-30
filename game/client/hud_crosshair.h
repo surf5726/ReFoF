@@ -19,6 +19,8 @@ namespace vgui
 	class IScheme;
 };
 
+struct FoFCrosshairState;
+
 //-----------------------------------------------------------------------------
 // Purpose: 
 //-----------------------------------------------------------------------------
@@ -28,12 +30,13 @@ class CHudCrosshair : public CHudElement, public vgui::Panel
 public:
 	CHudCrosshair( const char *pElementName );
 	virtual ~CHudCrosshair();
+	virtual void	Reset();
 
-	virtual void	SetCrosshairAngle( const QAngle& angle );
-	virtual void	SetCrosshair( CHudTexture *texture, const Color& clr );
-	virtual void	ResetCrosshair();
-	virtual void	DrawCrosshair( void ) {}
-  	virtual bool	HasCrosshair( void ) { return ( m_pCrosshair != NULL ); }
+	void	SetCrosshairAngle( const QAngle& angle );
+	void	SetCrosshair( CHudTexture *texture, const Color& clr );
+	void	ResetCrosshair();
+	void	DrawCrosshair( void ) {}
+	bool	HasCrosshair( void ) { return ( m_pCrosshair != NULL ); }
 	virtual bool	ShouldDraw();
 
 	// any UI element that wants to be at the aim point can use this to figure out where to draw
@@ -47,6 +50,8 @@ protected:
 	CHudTexture		*m_pDefaultCrosshair;
 	Color			m_clrCrosshair;
 	QAngle			m_vecCrossHairOffsetAngle;
+
+	FoFCrosshairState *m_pFoFCrosshairState;
 
 	CPanelAnimationVar( bool, m_bHideCrosshair, "never_draw", "false" );
 };

@@ -7,6 +7,9 @@
 #include "cbase.h"
 #include "player.h"
 #include "player_resource.h"
+#if defined( HL2MP )
+#include "fof/fof_player.h"
+#endif
 #include <coordsize.h>
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -18,6 +21,10 @@ IMPLEMENT_SERVERCLASS_ST_NOBASE(CPlayerResource, DT_PlayerResource)
 	SendPropArray3( SENDINFO_ARRAY3(m_iPing), SendPropInt( SENDINFO_ARRAY(m_iPing), 10, SPROP_UNSIGNED ) ),
 //	SendPropArray( SendPropInt( SENDINFO_ARRAY(m_iPacketloss), 7, SPROP_UNSIGNED ), m_iPacketloss ),
 	SendPropArray3( SENDINFO_ARRAY3(m_iScore), SendPropInt( SENDINFO_ARRAY(m_iScore), 12 ) ),
+#if defined( HL2MP )
+	SendPropArray3( SENDINFO_ARRAY3(m_iExp), SendPropInt( SENDINFO_ARRAY(m_iExp), 16 ) ),
+	SendPropArray3( SENDINFO_ARRAY3(m_iFoFState), SendPropInt( SENDINFO_ARRAY(m_iFoFState), 32, SPROP_UNSIGNED ) ),
+#endif
 	SendPropArray3( SENDINFO_ARRAY3(m_iDeaths), SendPropInt( SENDINFO_ARRAY(m_iDeaths), 12 ) ),
 	SendPropArray3( SENDINFO_ARRAY3(m_bConnected), SendPropInt( SENDINFO_ARRAY(m_bConnected), 1, SPROP_UNSIGNED ) ),
 	SendPropArray3( SENDINFO_ARRAY3(m_iTeam), SendPropInt( SENDINFO_ARRAY(m_iTeam), 4 ) ),
@@ -52,7 +59,7 @@ CPlayerResource *g_pPlayerResource;
 //-----------------------------------------------------------------------------
 void CPlayerResource::Spawn( void )
 {
-	for ( int i=0; i < MAX_PLAYERS+1; i++ )
+	for ( int i = 0; i < PLAYER_RESOURCE_ARRAY_COUNT; ++i )
 	{
 		m_iPing.Set( i, 0 );
 		m_iScore.Set( i, 0 );
@@ -60,7 +67,16 @@ void CPlayerResource::Spawn( void )
 		m_bConnected.Set( i, 0 );
 		m_iTeam.Set( i, 0 );
 		m_bAlive.Set( i, 0 );
+		m_iHealth.Set( i, 0 );
 	}
+
+#if defined( HL2MP )
+	for ( int i = 0; i < PLAYER_RESOURCE_ARRAY_COUNT; ++i )
+	{
+		m_iExp.Set( i, 0 );
+		m_iFoFState.Set( i, 0 );
+	}
+#endif
 
 	SetThink( &CPlayerResource::ResourceThink );
 	SetNextThink( gpGlobals->curtime );
@@ -93,7 +109,9 @@ void CPlayerResource::ResourceThink( void )
 //-----------------------------------------------------------------------------
 void CPlayerResource::UpdatePlayerData( void )
 {
-	for ( int i = 1; i <= gpGlobals->maxClients; i++ )
+	const int playerLimit = MIN( gpGlobals->maxClients,
+		PLAYER_RESOURCE_ARRAY_COUNT - 1 );
+	for ( int i = 1; i <= playerLimit; i++ )
 	{
 		CBasePlayer *pPlayer = (CBasePlayer*)UTIL_PlayerByIndex( i );
 		
@@ -105,6 +123,15 @@ void CPlayerResource::UpdatePlayerData( void )
 			m_iTeam.Set( i, pPlayer->GetTeamNumber() );
 			m_bAlive.Set( i, pPlayer->IsAlive()?1:0 );
 			m_iHealth.Set(i, MAX( 0, pPlayer->GetHealth() ) );
+
+#if defined( HL2MP )
+			CFoF_Player *pFoFPlayer = ToFoFPlayer( pPlayer );
+			if ( pFoFPlayer )
+			{
+				m_iExp.Set( i, pFoFPlayer->GetFoFTotalNotoriety() );
+				m_iFoFState.Set( i, pFoFPlayer->GetFoFResourceState() );
+			}
+#endif
 
 			// Don't update ping / packetloss everytime
 

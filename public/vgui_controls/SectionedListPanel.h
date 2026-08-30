@@ -93,6 +93,14 @@ public:
 	virtual void SetItemBgColor( int itemID, Color color );
 	virtual int GetColumnIndexByName(int sectionID, char* name);
 	virtual int GetLineSpacing() { return m_iLineSpacing; }
+	// FoF's scoreboard adjusts this at runtime for mode/player-count
+	// density.  Keep it non-virtual so the public SDK header remains ABI
+	// compatible with the prebuilt vgui_controls module.
+	void SetLineSpacing( int lineSpacing )
+	{
+		m_iLineSpacing = lineSpacing;
+		InvalidateLayout();
+	}
 	//=============================================================================
 	// HPE_END
 	//=============================================================================

@@ -36,9 +36,10 @@ public:
 	virtual int		GetFrags( int index ) = 0;
 	virtual int		GetTeam( int index ) = 0;
 	virtual int		GetHealth( int index ) = 0;
+	virtual int		GetFoFExp( int index ) const = 0;
+	virtual int		GetFoFState( int index ) const = 0;
 };
 
 extern IGameResources *GameResources( void ); // singelton accessor
 
 #endif
-

@@ -49,6 +49,7 @@ public:
 	virtual void VidInit( void );
 	virtual void Reset( void );
 	virtual void OnThink();
+	virtual bool ShouldDraw( void );
 			void MsgFunc_Damage( bf_read &msg );
 
 private:
@@ -107,8 +108,18 @@ void CHudHealth::VidInit()
 	Reset();
 }
 
+bool CHudHealth::ShouldDraw( void )
+{
+	// FoF owns the lower-left health presentation through CHudFoFHealth.
+	// FoF players never equip an HEV suit, so this inherited HL2
+	// numeric panel is normally suppressed by HIDEHUD_NEEDSUIT.  Suppress it
+	// explicitly to prevent its background
+	// tile from leaking through if a server briefly reports suit state.
+	return false;
+}
+
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 void CHudHealth::OnThink()
 {

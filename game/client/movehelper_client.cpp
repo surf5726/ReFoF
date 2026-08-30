@@ -11,6 +11,7 @@
 #include "igamemovement.h"
 #include "engine/IEngineTrace.h"
 #include "engine/ivmodelinfo.h"
+#include "fof/c_fof_player.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -272,7 +273,10 @@ bool CMoveHelperClient::PlayerFallingDamage(void)
 //-----------------------------------------------------------------------------
 void CMoveHelperClient::PlayerSetAnimation( PLAYER_ANIM eAnim )
 {
-	 // Do nothing on the client. Animations are set on the server.
+	C_FoF_Player *pPlayer = static_cast< C_FoF_Player * >(
+		C_BasePlayer::GetLocalPlayer() );
+	if ( pPlayer )
+		pPlayer->DoAnimationEvent( PLAYERANIMEVENT_JUMP, 0 );
 }
 
 bool CMoveHelperClient::IsWorldEntity( const CBaseHandle &handle )

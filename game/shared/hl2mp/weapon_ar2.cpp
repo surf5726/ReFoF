@@ -43,7 +43,9 @@ BEGIN_PREDICTION_DATA( CWeaponAR2 )
 END_PREDICTION_DATA()
 
 LINK_ENTITY_TO_CLASS( weapon_ar2, CWeaponAR2 );
+#if !defined( GAME_DLL )
 PRECACHE_WEAPON_REGISTER(weapon_ar2);
+#endif
 
 
 #ifndef CLIENT_DLL

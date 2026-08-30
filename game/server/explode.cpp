@@ -309,6 +309,8 @@ void CEnvExplosion::InputExplode( inputdata_t &inputdata )
 	//Get the damage override if specified
 	int	iRadius = ( m_iRadiusOverride > 0 ) ? m_iRadiusOverride : ( m_iMagnitude * 2.5f );
 
+	EmitSound( "BaseGrenade.ExplodeBig" );
+
 	CPASFilter filter( vecExplodeOrigin );
 	te->Explosion( filter, 0.0,
 		&vecExplodeOrigin, 

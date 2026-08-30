@@ -7,12 +7,15 @@
 //===========================================================================//
 #include "cbase.h"
 #include "c_baseplayer.h"
+#include "fof/c_fof_player.h"
+#include "fof/fof_player_shared.h"
 #include "flashlighteffect.h"
 #include "weapon_selection.h"
 #include "history_resource.h"
 #include "iinput.h"
 #include "input.h"
 #include "view.h"
+#include "viewrender.h"
 #include "iviewrender.h"
 #include "iclientmode.h"
 #include "in_buttons.h"
@@ -37,6 +40,7 @@
 #include "c_vguiscreen.h"
 #include "datacache/imdlcache.h"
 #include "vgui/ISurface.h"
+
 #include "voice_status.h"
 #include "fx.h"
 #include "dt_utlvector_recv.h"
@@ -70,6 +74,73 @@ int g_nKillCamTarget1 = 0;
 int g_nKillCamTarget2 = 0;
 
 extern ConVar mp_forcecamera; // in gamevars_shared.h
+
+void C_BasePlayer::MakeTracer(
+	const Vector &vecTracerSrc,
+	const trace_t &tr,
+	int iTracerType,
+	bool bPrimary )
+{
+	C_BaseCombatWeapon *pWeapon = bPrimary ?
+		GetActiveWeapon() : GetActiveWeapon2();
+	if ( pWeapon )
+	{
+		pWeapon->MakeTracer( vecTracerSrc, tr, iTracerType );
+		return;
+	}
+
+	MakeTracer( vecTracerSrc, tr, iTracerType );
+}
+
+bool C_BasePlayer::IsOnFoFHorse() const
+{
+	return m_bOnHorse;
+}
+
+float C_BasePlayer::GetFoFHorseAcceleration() const
+{
+	return m_flHorseAcc;
+}
+
+float C_BasePlayer::GetFoFSlideForce() const
+{
+	return m_flSlideForce;
+}
+
+float C_BasePlayer::GetFoFJWallForce() const
+{
+	return m_flJWallForce;
+}
+
+const Vector &C_BasePlayer::GetFoFSlideMove() const
+{
+	return m_vecSlide;
+}
+
+const QAngle &C_BasePlayer::GetFoFSlideView() const
+{
+	return m_angSlideView;
+}
+
+float C_BasePlayer::GetFoFKickTime() const
+{
+	return m_flKickTime;
+}
+
+void C_BasePlayer::SetFoFKickTime( float flTime )
+{
+	m_flKickTime = flTime;
+}
+
+float C_BasePlayer::GetFoFKickedPenaltyTime() const
+{
+	return m_flKickedPenaltyTime;
+}
+
+void C_BasePlayer::SetFoFKickedPenaltyTime( float flTime )
+{
+	m_flKickedPenaltyTime = flTime;
+}
 
 #define FLASHLIGHT_DISTANCE		1000
 #define MAX_VGUI_INPUT_MODE_SPEED 30
@@ -156,6 +227,7 @@ BEGIN_RECV_TABLE_NOBASE( CPlayerLocalData, DT_Local )
 	RecvPropFloat	(RECVINFO(m_flDucktime)),
 	RecvPropFloat	(RECVINFO(m_flDuckJumpTime)),
 	RecvPropFloat	(RECVINFO(m_flJumpTime)),
+	RecvPropInt		(RECVINFO(m_nStepside)),
 	RecvPropFloat	(RECVINFO(m_flFallVelocity)),
 
 #if PREDICTION_ERROR_CHECK_LEVEL > 1 
@@ -214,6 +286,10 @@ END_RECV_TABLE()
 
 	BEGIN_RECV_TABLE_NOBASE( C_BasePlayer, DT_LocalPlayerExclusive )
 
+		RecvPropQAngles		( RECVINFO( m_angSlideView ) ),
+		RecvPropFloat		( RECVINFO( m_flKickTime ) ),
+		RecvPropFloat		( RECVINFO( m_flKickedPenaltyTime ) ),
+
 		RecvPropDataTable	( RECVINFO_DT(m_Local),0, &REFERENCE_RECV_TABLE(DT_Local) ),
 
 		RecvPropFloat		( RECVINFO(m_vecViewOffset[0]) ),
@@ -229,6 +305,7 @@ END_RECV_TABLE()
 		RecvPropInt			( RECVINFO( m_nNextThinkTick ) ),
 
 		RecvPropEHandle		( RECVINFO( m_hLastWeapon ) ),
+		RecvPropEHandle		( RECVINFO( m_hLastWeapon2 ) ),
 		RecvPropEHandle		( RECVINFO( m_hGroundEntity ) ),
 
  		RecvPropFloat		( RECVINFO(m_vecVelocity[0]), 0, RecvProxy_LocalVelocityX ),
@@ -242,6 +319,8 @@ END_RECV_TABLE()
 		RecvPropFloat		( RECVINFO( m_flConstraintRadius )),
 		RecvPropFloat		( RECVINFO( m_flConstraintWidth )),
 		RecvPropFloat		( RECVINFO( m_flConstraintSpeedFactor )),
+		RecvPropFloat		( RECVINFO( consecutiveJumps )),
+		RecvPropVector		( RECVINFO( m_vecSlide )),
 
 		RecvPropFloat		( RECVINFO( m_flDeathTime )),
 
@@ -295,6 +374,11 @@ END_RECV_TABLE()
 		
 
 		RecvPropString( RECVINFO(m_szLastPlaceName) ),
+
+		RecvPropFloat	(RECVINFO(m_flSlideForce)),
+		RecvPropFloat	(RECVINFO(m_flJWallForce)),
+		RecvPropBool	(RECVINFO(m_bOnHorse)),
+		RecvPropFloat	(RECVINFO(m_flHorseAcc)),
 
 #if defined USES_ECON_ITEMS
 		RecvPropUtlVector( RECVINFO_UTLVECTOR( m_hMyWearables ), MAX_WEARABLES_SENT_FROM_SERVER,	RecvPropEHandle(NULL, 0, 0) ),
@@ -352,6 +436,10 @@ BEGIN_PREDICTION_DATA( C_BasePlayer )
 	DEFINE_PRED_TYPEDESCRIPTION( pl, CPlayerState ),
 
 	DEFINE_PRED_FIELD( m_iFOV, FIELD_INTEGER, FTYPEDESC_INSENDTABLE ),
+	// FoF changes the default FOV while a long-gun sight finishes expanding.
+	// The shipped client keeps that presentation value in prediction history
+	// even though the server remains authoritative for the received field.
+	DEFINE_PRED_FIELD( m_iDefaultFOV, FIELD_INTEGER, 0 ),
 	DEFINE_PRED_FIELD( m_hZoomOwner, FIELD_EHANDLE, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_flFOVTime, FIELD_FLOAT, 0 ),
 	DEFINE_PRED_FIELD( m_iFOVStart, FIELD_INTEGER, 0 ),
@@ -365,7 +453,24 @@ BEGIN_PREDICTION_DATA( C_BasePlayer )
 	DEFINE_PRED_FIELD( m_nNextThinkTick, FIELD_INTEGER, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_lifeState, FIELD_CHARACTER, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_nWaterLevel, FIELD_CHARACTER, FTYPEDESC_INSENDTABLE ),
-	
+
+	// Fistful of Frags movement state. Keep this list aligned with the
+	// original client's C_BasePlayer prediction datamap. m_bOnHorse is
+	// networked, but is deliberately not part of that prediction datamap.
+	DEFINE_PRED_FIELD( consecutiveJumps, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flKickTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flKickedPenaltyTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_vecSlide, FIELD_VECTOR, FTYPEDESC_INSENDTABLE ),
+	// Keep the strict original prediction entry.  The shipped client stores
+	// the command's signed angle representation here, then accepts the
+	// server's ten-bit 0..360 quantization as a prediction correction. That
+	// correction also keeps the subsequent slide trace on the server's path.
+	DEFINE_PRED_FIELD( m_angSlideView, FIELD_VECTOR,
+		FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flSlideForce, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flJWallForce, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flHorseAcc, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+
 	DEFINE_PRED_FIELD_TOL( m_vecBaseVelocity, FIELD_VECTOR, FTYPEDESC_INSENDTABLE, 0.05 ),
 
 	DEFINE_FIELD( m_nButtons, FIELD_INTEGER ),
@@ -437,6 +542,16 @@ C_BasePlayer::C_BasePlayer() : m_iv_vecViewOffset( "C_BasePlayer::m_iv_vecViewOf
 	m_flNextAchievementAnnounceTime = 0;
 
 	m_bFiredWeapon = false;
+	m_hLastWeapon2 = NULL;
+	m_flHorseAcc = 0.0f;
+	m_flSlideForce = 0.0f;
+	m_flJWallForce = 0.0f;
+	m_bOnHorse = false;
+	consecutiveJumps = 0.0f;
+	m_flKickTime = 0.0f;
+	m_flKickedPenaltyTime = 0.0f;
+	m_vecSlide.Init();
+	m_angSlideView.Init();
 
 	m_nForceVisionFilterFlags = 0;
 	m_nLocalPlayerVisionFlags = 0;
@@ -1902,6 +2017,12 @@ void C_BasePlayer::ThirdPersonSwitch( bool bThirdperson )
 //-----------------------------------------------------------------------------
 /*static*/ bool C_BasePlayer::ShouldDrawLocalPlayer()
 {
+	// Reflection views use the third-person world presentation even though the
+	// main camera remains in first person.  Treating the mirror pass as the
+	// main view suppresses both the local player and their carried world model.
+	if ( CurrentViewID() == VIEW_REFLECTION )
+		return true;
+
 	if ( !UseVR() )
 	{
 		return !LocalPlayerInFirstPersonView() || cl_first_person_uses_world_model.GetBool();
@@ -1942,6 +2063,9 @@ bool C_BasePlayer::InFirstPersonView()
 //-----------------------------------------------------------------------------
 bool C_BasePlayer::ShouldDrawThisPlayer()
 {
+	if ( IsLocalPlayer() && CurrentViewID() == VIEW_REFLECTION )
+		return true;
+
 	if ( !InFirstPersonView() )
 	{
 		return true;
@@ -2514,7 +2638,11 @@ void RecvProxy_ObserverTarget( const CRecvProxyData *pData, void *pStruct, void 
 
 	RecvProxy_IntToEHandle( pData, pStruct, &hTarget );
 
-	pPlayer->SetObserverTarget( hTarget );
+	C_FoF_Player *pFoFPlayer = dynamic_cast< C_FoF_Player * >( pPlayer );
+	if ( pFoFPlayer )
+		pFoFPlayer->SetObserverTarget( hTarget );
+	else
+		pPlayer->SetObserverTarget( hTarget );
 }
 
 void RecvProxy_ObserverMode( const CRecvProxyData *pData, void *pStruct, void *pOut )

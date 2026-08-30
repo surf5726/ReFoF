@@ -13,6 +13,7 @@
 
 #include "entityoutput.h"
 #include "pathtrack.h"
+#include "basetoggle.h"
 
 
 // Spawnflags of CPathCorner
@@ -55,9 +56,9 @@ enum TrainOrientationType_t
         TrainOrientation_EaseInEaseOut,
 };
 
-class CFuncTrackTrain : public CBaseEntity
+class CFuncTrackTrain : public CBaseToggle
 {
-	DECLARE_CLASS( CFuncTrackTrain, CBaseEntity );
+	DECLARE_CLASS( CFuncTrackTrain, CBaseToggle );
 	DECLARE_SERVERCLASS();
 
 public:

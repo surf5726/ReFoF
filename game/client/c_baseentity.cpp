@@ -40,6 +40,7 @@
 #include "cdll_bounded_cvars.h"
 #include "inetchannelinfo.h"
 #include "proto_version.h"
+#include "fof/c_fof_player.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -4625,6 +4626,56 @@ void C_BaseEntity::PostEntityPacketReceived( void )
 #endif
 }
 
+typedescription_t *FindFieldByName(
+	const char *fieldname, datamap_t *dmap );
+
+static void FoFCopyPackedPredictionField(
+	C_BaseEntity *pEntity,
+	void *pPredictedState,
+	const void *pNetworkState,
+	const char *pszFieldName )
+{
+	typedescription_t *pField = FindFieldByName(
+		pszFieldName, pEntity->GetPredDescMap() );
+	if ( !pField || pField->fieldSizeInBytes <= 0 )
+		return;
+
+	const int nOffset = pField->fieldOffset[TD_OFFSET_PACKED];
+	Q_memcpy(
+		static_cast< byte * >( pPredictedState ) + nOffset,
+		static_cast< const byte * >( pNetworkState ) + nOffset,
+		pField->fieldSizeInBytes );
+}
+
+static void FoFCopyPackedEmbeddedPredictionField(
+	C_BaseEntity *pEntity,
+	void *pPredictedState,
+	const void *pNetworkState,
+	const char *pszEmbeddedFieldName,
+	const char *pszFieldName )
+{
+	typedescription_t *pEmbeddedField = FindFieldByName(
+		pszEmbeddedFieldName, pEntity->GetPredDescMap() );
+	if ( !pEmbeddedField || pEmbeddedField->fieldType != FIELD_EMBEDDED ||
+		!pEmbeddedField->td )
+	{
+		return;
+	}
+
+	typedescription_t *pField = FindFieldByName(
+		pszFieldName, pEmbeddedField->td );
+	if ( !pField || pField->fieldSizeInBytes <= 0 )
+		return;
+
+	const int nOffset =
+		pEmbeddedField->fieldOffset[TD_OFFSET_PACKED] +
+		pField->fieldOffset[TD_OFFSET_PACKED];
+	Q_memcpy(
+		static_cast< byte * >( pPredictedState ) + nOffset,
+		static_cast< const byte * >( pNetworkState ) + nOffset,
+		pField->fieldSizeInBytes );
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: Called once per frame after all updating is done
 // Input  : errorcheck - 
@@ -4658,10 +4709,37 @@ bool C_BaseEntity::PostNetworkDataReceived( int commands_acknowledged )
 
 	if ( errorcheck )
 	{
-		void *predicted_state_data = GetPredictedFrame( commands_acknowledged - 1 );	
-		Assert( predicted_state_data );												
+		void *predicted_state_data = GetPredictedFrame( commands_acknowledged - 1 );
+		Assert( predicted_state_data );
 		const void *original_state_data = GetOriginalNetworkDataObject();
 		Assert( original_state_data );
+
+		C_FoF_Player *pFoFPlayer =
+			dynamic_cast< C_FoF_Player * >( this );
+		if ( pFoFPlayer && pFoFPlayer->IsLocalPlayer() &&
+			!pFoFPlayer->IsAlive() &&
+			pFoFPlayer->GetTeamNumber() > TEAM_SPECTATOR &&
+			pFoFPlayer->GetMoveType() == MOVETYPE_OBSERVER &&
+			pFoFPlayer->GetObserverTarget() )
+		{
+			const int nObserverMode = pFoFPlayer->GetObserverMode();
+			if ( nObserverMode == OBS_MODE_IN_EYE ||
+				nObserverMode == OBS_MODE_CHASE ||
+				nObserverMode == OBS_MODE_POI )
+			{
+				// Forced chase/in-eye movement aliases these fields to a remote
+				// player. They cannot be derived from the local command history.
+				FoFCopyPackedPredictionField(
+					this, predicted_state_data, original_state_data,
+					"m_vecNetworkOrigin" );
+				FoFCopyPackedPredictionField(
+					this, predicted_state_data, original_state_data,
+					"m_vecVelocity" );
+				FoFCopyPackedEmbeddedPredictionField(
+					this, predicted_state_data, original_state_data,
+					"m_Local", "m_flFallVelocity" );
+			}
+		}
 
 		bool counterrors = true;
 		bool reporterrors = showthis;
@@ -4676,7 +4754,6 @@ bool C_BaseEntity::PostNetworkDataReceived( int commands_acknowledged )
 		if ( ecount > 0 )
 		{
 			haderrors = true;
-		//	Msg( "%i errors %i on entity %i %s\n", gpGlobals->tickcount, ecount, index, IsClientCreated() ? "true" : "false" );
 		}
 	}
 #endif

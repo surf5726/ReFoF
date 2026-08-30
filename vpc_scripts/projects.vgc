@@ -39,6 +39,11 @@ $Project "height2normal"
 	"utils\height2normal\height2normal.vpc" [$WIN32]
 }
 
+$Project "lzma"
+{
+	"utils\lzma\lzma.vpc" [$WIN32||$POSIX]
+}
+
 $Project "server"
 {
 	"game\server\server_hl2mp.vpc"		[($WIN32||$POSIX) && $HL2MP]

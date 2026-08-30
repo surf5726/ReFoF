@@ -11,16 +11,20 @@
 #pragma once
 #endif
 
-#include "baseprojectile.h"
-
 #if defined( CLIENT_DLL )
 
 #define CBaseGrenade C_BaseGrenade
 
+#include "c_baseanimating.h"
 #include "c_basecombatcharacter.h"
 
 #else
 
+#if defined( GAME_DLL )
+#include "baseanimating.h"
+#else
+#include "baseprojectile.h"
+#endif
 #include "basecombatcharacter.h"
 #include "player_pickup.h"
 
@@ -31,12 +35,23 @@
 class CTakeDamageInfo;
 
 #if !defined( CLIENT_DLL )
-class CBaseGrenade : public CBaseProjectile, public CDefaultPlayerPickupVPhysics
+#if defined( GAME_DLL )
+// The shipped FoF server predates CBaseProjectile in this hierarchy.
+// Keeping the SDK 2013 base adds eight virtual slots and changes the object
+// layout of every grenade entity.
+class CBaseGrenade : public CBaseAnimating, public CDefaultPlayerPickupVPhysics
+{
+	DECLARE_CLASS( CBaseGrenade, CBaseAnimating );
 #else
-class CBaseGrenade : public CBaseProjectile
-#endif
+class CBaseGrenade : public CBaseProjectile, public CDefaultPlayerPickupVPhysics
 {
 	DECLARE_CLASS( CBaseGrenade, CBaseProjectile );
+#endif
+#else
+class CBaseGrenade : public CBaseAnimating
+{
+	DECLARE_CLASS( CBaseGrenade, CBaseAnimating );
+#endif
 public:
 
 	CBaseGrenade(void);
@@ -116,7 +131,14 @@ public:
 public:
 	IMPLEMENT_NETWORK_VAR_FOR_DERIVED( m_vecVelocity );
 	IMPLEMENT_NETWORK_VAR_FOR_DERIVED( m_fFlags );
-	
+
+#if defined( CLIENT_DLL )
+	// FoF's C_BaseAnimating is eight bytes wider than the pinned SDK at
+	// this point.  Preserve the original grenade member offsets while keeping
+	// the recovered direct inheritance relationship.
+	unsigned char		m_FoFClientLayoutPad[8];
+#endif
+
 	bool				m_bHasWarnedAI;				// whether or not this grenade has issued its DANGER sound to the world sound list yet.
 	CNetworkVar( bool, m_bIsLive );					// Is this grenade live, or can it be picked up?
 	CNetworkVar( float, m_DmgRadius );				// How far do I do damage?

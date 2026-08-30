@@ -12,6 +12,8 @@
 #include "physics_saverestore.h"
 #include "datacache/imdlcache.h"
 #include "activitylist.h"
+#include "fof/fof_player_weapons.h"
+#include "fof/fof_player_shared.h"
 
 // NVNT start extra includes
 #include "haptics/haptic_utils.h"
@@ -19,6 +21,11 @@
 	#include "prediction.h"
 #endif
 // NVNT end extra includes
+
+#if defined( CLIENT_DLL )
+	#include "fof/fof_audio.h"
+	#include "glow_outline_effect.h"
+#endif
 
 #if defined ( TF_DLL ) || defined ( TF_CLIENT_DLL )
 #include "tf_shareddefs.h"
@@ -31,6 +38,7 @@
 #include "eventqueue.h"
 #include "fmtstr.h"
 #include "gameweaponmanager.h"
+#include "fof/fof_course_mode.h"
 
 #ifdef HL2MP
 	#include "hl2mp_gamerules.h"
@@ -52,6 +60,25 @@
 #define HIDEWEAPON_THINK_CONTEXT			"BaseCombatWeapon_HideThink"
 
 extern bool UTIL_ItemCanBeTouchedByPlayer( CBaseEntity *pItem, CBasePlayer *pPlayer );
+
+enum FoFWeaponGlowMessageType_t
+{
+	FOF_WEAPON_GLOW_TEAM = 4,
+	FOF_WEAPON_GLOW_AMMO = 5,
+	FOF_WEAPON_GLOW_CLEAR = 6,
+};
+
+#if defined( CLIENT_DLL )
+static bool FoFWeaponUsesMeleePickupGlow(
+	C_BaseCombatWeapon *pWeapon )
+{
+	const char *pszClassname = pWeapon ? pWeapon->GetClassname() : NULL;
+	return pszClassname &&
+		( !Q_stricmp( pszClassname, "weapon_knife" ) ||
+		  !Q_stricmp( pszClassname, "weapon_axe" ) ||
+		  !Q_stricmp( pszClassname, "weapon_machete" ) );
+}
+#endif
 
 #if defined ( TF_CLIENT_DLL ) || defined ( TF_DLL )
 #ifdef _DEBUG
@@ -86,10 +113,14 @@ CBaseCombatWeapon::CBaseCombatWeapon()
 	m_iClip2 = -1;
 	m_iPrimaryAmmoType = -1;
 	m_iSecondaryAmmoType = -1;
+	m_pGlowEffect = NULL;
 #endif
 
 #if !defined( CLIENT_DLL )
 	m_pConstraint = NULL;
+	m_bFoFWeaponState = false;
+	m_flFoFWeaponStateTime = 0.0f;
+	m_iFoFShotCounter = 0;
 	OnBaseCombatWeaponCreated( this );
 #endif
 
@@ -111,6 +142,9 @@ CBaseCombatWeapon::CBaseCombatWeapon()
 //-----------------------------------------------------------------------------
 CBaseCombatWeapon::~CBaseCombatWeapon( void )
 {
+#if defined( CLIENT_DLL )
+	DestroyGlowEffect();
+#endif
 #if !defined( CLIENT_DLL )
 	//Remove our constraint, if we have one
 	if ( m_pConstraint != NULL )
@@ -121,6 +155,113 @@ CBaseCombatWeapon::~CBaseCombatWeapon( void )
 	OnBaseCombatWeaponDestroyed( this );
 #endif
 }
+
+#if defined( CLIENT_DLL )
+void CBaseCombatWeapon::CreateAmmoGlowEffect( int nAmmo )
+{
+	DestroyGlowEffect();
+
+	Vector color( 1.0f, 0.94f, 0.3f );
+	const int nMaxClip = GetMaxClip1();
+	if ( FoFWeaponUsesMeleePickupGlow( this ) )
+	{
+		color.Init( 0.1f, 0.9f, 0.1f );
+	}
+	else if ( nAmmo == 0 )
+	{
+		color.Init( 1.0f, 0.24f, 0.1f );
+	}
+	else if ( nMaxClip > 0 &&
+		static_cast< float >( nAmmo ) /
+		static_cast< float >( nMaxClip ) > 0.6f )
+	{
+		color.Init( 0.1f, 0.9f, 0.1f );
+	}
+
+	m_pGlowEffect = new CGlowObject(
+		this, color, 0.85f, false, true );
+}
+
+void CBaseCombatWeapon::CreateGlowEffect( int nType )
+{
+	DestroyGlowEffect();
+
+	Vector color( 1.0f, 1.0f, 1.0f );
+	switch ( nType )
+	{
+	case 2:
+		color.Init( 0.0f, 0.1f, 1.0f );
+		break;
+	case 3:
+		color.Init( 1.0f, 0.0f, 0.0f );
+		break;
+	case FOF_WEAPON_GLOW_TEAM:
+		color.Init( 0.9f, 0.84f, 0.2f );
+		break;
+	case FOF_WEAPON_GLOW_AMMO:
+		color.Init( 0.2f, 0.8f, 0.1f );
+		break;
+	}
+
+	m_pGlowEffect = new CGlowObject(
+		this, color, 0.95f, false, true );
+}
+
+void CBaseCombatWeapon::DestroyGlowEffect()
+{
+	delete m_pGlowEffect;
+	m_pGlowEffect = NULL;
+}
+
+void CBaseCombatWeapon::ReceiveMessage( int classID, bf_read &msg )
+{
+	if ( classID != GetClientClass()->m_ClassID )
+	{
+		BaseClass::ReceiveMessage( classID, msg );
+		return;
+	}
+
+	const int nMessageType = msg.ReadByte();
+	switch ( nMessageType )
+	{
+	case FOF_WEAPON_GLOW_TEAM:
+		CreateGlowEffect( static_cast< short >( msg.ReadShort() ) );
+		break;
+	case FOF_WEAPON_GLOW_AMMO:
+		CreateAmmoGlowEffect( static_cast< short >( msg.ReadShort() ) );
+		break;
+	case FOF_WEAPON_GLOW_CLEAR:
+		DestroyGlowEffect();
+		break;
+	}
+}
+#else
+void CBaseCombatWeapon::SendFoFWorldGlow()
+{
+	EntityMessageBegin( this );
+	if ( FClassnameIs( this, "weapon_xbow" ) )
+	{
+		WRITE_BYTE( FOF_WEAPON_GLOW_TEAM );
+		WRITE_SHORT( GetTeamNumber() );
+	}
+	else
+	{
+		WRITE_BYTE( FOF_WEAPON_GLOW_AMMO );
+		WRITE_SHORT( Clip1() );
+	}
+	MessageEnd();
+}
+
+void CBaseCombatWeapon::ClearFoFWorldGlow()
+{
+	if ( FClassnameIs( this, "weapon_xbow" ) )
+		return;
+
+	EntityMessageBegin( this );
+		WRITE_BYTE( FOF_WEAPON_GLOW_CLEAR );
+	MessageEnd();
+}
+#endif
 
 void CBaseCombatWeapon::Activate( void )
 {
@@ -671,6 +812,14 @@ float CBaseCombatWeapon::GetWeaponIdleTime( void )
 void CBaseCombatWeapon::Drop( const Vector &vecVelocity )
 {
 #if !defined( CLIENT_DLL )
+	if ( FClassnameIs( this, "weapon_xbow" ) )
+	{
+		AddSolidFlags( FSOLID_NOT_STANDABLE );
+	}
+	else
+	{
+		m_bFoFWeaponState = true;
+	}
 
 	// Once somebody drops a gun, it's fair game for removal when/if
 	// a game_weapon_manager does a cleanup on surplus weapons in the
@@ -689,6 +838,7 @@ void CBaseCombatWeapon::Drop( const Vector &vecVelocity )
 	m_iState = WEAPON_NOT_CARRIED;
 	RemoveEffects( EF_NODRAW );
 	FallInit();
+	SendFoFWorldGlow();
 	SetGroundEntity( NULL );
 	SetThink( &CBaseCombatWeapon::SetPickupTouch );
 	SetTouch(NULL);
@@ -710,8 +860,13 @@ void CBaseCombatWeapon::Drop( const Vector &vecVelocity )
 	}
 
 	CBaseEntity *pOwner = GetOwnerEntity();
+	CBasePlayer *pFoFOwner = ToBasePlayer( GetOwner() );
+	if ( pFoFOwner && ( FoFPlayerInfo( pFoFOwner ) & 0x40 ) )
+		AddSolidFlags( FSOLID_TRIGGER );
 
-	SetNextThink( gpGlobals->curtime + 1.0f );
+	// FoF enables pickup touch on the next 10 ms tick.  The subsequent
+	// SetPickupTouch think owns the ordinary 30-second dropped-weapon cleanup.
+	SetNextThink( gpGlobals->curtime + 0.01f );
 	SetOwnerEntity( NULL );
 	SetOwner( NULL );
 
@@ -738,26 +893,35 @@ void CBaseCombatWeapon::OnPickedUp( CBaseCombatCharacter *pNewOwner )
 #if !defined( CLIENT_DLL )
 	RemoveEffects( EF_ITEM_BLINK );
 
+	// Clear the world outline only after BumpWeapon has accepted the pickup.
+	// A rejected collision must leave a dropped weapon's outline intact.
+	ClearFoFWorldGlow();
+
 	if( pNewOwner->IsPlayer() )
 	{
 		m_OnPlayerPickup.FireOutput(pNewOwner, this);
 
-		// Play the pickup sound for 1st-person observers
-		CRecipientFilter filter;
-		for ( int i=1; i <= gpGlobals->maxClients; ++i )
+		const char *pszPickupSound =
+			FClassnameIs( this, "weapon_knife" ) ?
+				"FoFPlayer.KnifePickUp" :
+			( FClassnameIs( this, "weapon_axe" ) ||
+			  FClassnameIs( this, "weapon_machete" ) ) ?
+				"FoFPlayer.AxePickUp" :
+				"FoFPlayer.WeaponPickUp";
+		pNewOwner->EmitSound( pszPickupSound );
+
+		CFoF_Player *pPlayer = ToFoFPlayer( pNewOwner );
+		static ConVarRef currentMode( "fof_sv_currentmode", true );
+		static ConVarRef battleRoyale( "fof_sv_battle_royale", true );
+		if ( pPlayer &&
+			( !pPlayer->GetActiveWeapon() || ( pPlayer->GetFoFPlayerInfo() & 0x800 ) ) &&
+			( ( currentMode.IsValid() && currentMode.GetInt() == 3 ) ||
+			  ( battleRoyale.IsValid() && battleRoyale.GetBool() ) ) )
 		{
-			CBasePlayer *player = UTIL_PlayerByIndex(i);
-			if ( player && !player->IsAlive() && player->GetObserverMode() == OBS_MODE_IN_EYE )
-			{
-				filter.AddRecipient( player );
-			}
-		}
-		if ( filter.GetRecipientCount() )
-		{
-			CBaseEntity::EmitSound( filter, pNewOwner->entindex(), "Player.PickupWeapon" );
+			pPlayer->RestoreFoFUnarmedLoadout( this );
 		}
 
-		// Robin: We don't want to delete weapons the player has picked up, so 
+		// Robin: We don't want to delete weapons the player has picked up, so
 		// clear the name of the weapon. This prevents wildcards that are meant 
 		// to find NPCs finding weapons dropped by the NPCs as well.
 		SetName( NULL_STRING );
@@ -773,6 +937,8 @@ void CBaseCombatWeapon::OnPickedUp( CBaseCombatCharacter *pNewOwner )
 
 	// Someone picked me up, so make it so that I can't be removed.
 	SetRemoveable( false );
+	m_bFoFWeaponState = false;
+	m_flFoFWeaponStateTime = gpGlobals->curtime;
 #endif
 }
 
@@ -837,6 +1003,16 @@ void CBaseCombatWeapon::DefaultTouch( CBaseEntity *pOther )
 	CBasePlayer *pPlayer = ToBasePlayer(pOther);
 	if ( !pPlayer )
 		return;
+
+	// World pickups are acquired by the player's selected +use target, not
+	// by an incidental touch while +use is held. Fresh equipment grants still
+	// use this touch path, and bot pickup rules remain in BumpWeapon.
+	if ( !pPlayer->IsBot() &&
+		( IsRemoveable() ||
+		  IsSolidFlagSet( FOF_COURSE_USE_PICKUP_SOLID_FLAG ) ) )
+	{
+		return;
+	}
 
 	if( UTIL_ItemCanBeTouchedByPlayer(this, pPlayer) )
 	{
@@ -1063,29 +1239,22 @@ void CBaseCombatWeapon::SetActivity( Activity act, float duration )
 int CBaseCombatWeapon::UpdateClientData( CBasePlayer *pPlayer )
 {
 	int iNewState = WEAPON_IS_CARRIED_BY_PLAYER;
+	const bool bIsActiveWeapon = pPlayer->GetActiveWeapon() == this ||
+		pPlayer->GetActiveWeapon2() == this;
 
-	if ( pPlayer->GetActiveWeapon() == this )
+	if ( bIsActiveWeapon )
 	{
-		if ( pPlayer->m_fOnTarget ) 
-		{
-			iNewState = WEAPON_IS_ONTARGET;
-		}
-		else
-		{
-			iNewState = WEAPON_IS_ACTIVE;
-		}
-	}
-	else
-	{
-		iNewState = WEAPON_IS_CARRIED_BY_PLAYER;
+		iNewState = pPlayer->m_fOnTarget ?
+			WEAPON_IS_ONTARGET : WEAPON_IS_ACTIVE;
 	}
 
 	if ( m_iState != iNewState )
 	{
-		int iOldState = m_iState;
+		const int iOldState = m_iState;
 		m_iState = iNewState;
 		OnActiveStateChanged( iOldState );
 	}
+
 	return 1;
 }
 
@@ -1913,6 +2082,11 @@ void CBaseCombatWeapon::WeaponSound( WeaponSound_t sound_type, float soundtime /
 		// Play weapon sound from the owner
 		if ( GetOwner() )
 		{
+#if defined( CLIENT_DLL )
+			if ( FoFEmitOccludedWeaponSound( this, params ) )
+				return;
+#endif
+
 			CPASAttenuationFilter filter( GetOwner(), params.soundlevel );
 			if ( IsPredicted() && CBaseEntity::GetPredictionPlayer() )
 			{
@@ -2071,13 +2245,65 @@ bool CBaseCombatWeapon::Reload( void )
 }
 
 //=========================================================
+bool CBaseCombatWeapon::CanDualWield( void ) const
+{
+	return false;
+}
+
+bool CBaseCombatWeapon::IsSecondGun( void ) const
+{
+	return false;
+}
+
+bool CBaseCombatWeapon::CanFan( void ) const
+{
+	return false;
+}
+
+int CBaseCombatWeapon::FoFWeaponWeight( void ) const
+{
+	return 1;
+}
+
+float CBaseCombatWeapon::FoFSightExpandRate( void ) const
+{
+	return 0.5f;
+}
+
+float CBaseCombatWeapon::FoFSightContractRate( void ) const
+{
+	return 0.25f;
+}
+
+int CBaseCombatWeapon::FoFWeaponID( void ) const
+{
+	return -1;
+}
+
+float CBaseCombatWeapon::FoFProperty378( void ) const
+{
+	return 0.25f;
+}
+
+bool CBaseCombatWeapon::FoFUsesScope( void ) const
+{
+	return false;
+}
+
+int CBaseCombatWeapon::FoFZoomFOV( void ) const
+{
+	return 70;
+}
+
+float CBaseCombatWeapon::FoFSightMoveEndpoint( void ) const
+{
+	return 0.5f;
+}
+
 void CBaseCombatWeapon::WeaponIdle( void )
 {
-	//Idle again if we've finished
 	if ( HasWeaponIdleTimeElapsed() )
-	{
 		SendWeaponAnim( ACT_VM_IDLE );
-	}
 }
 
 
@@ -2372,10 +2598,36 @@ void CBaseCombatWeapon::MaintainIdealActivity( void )
 bool CBaseCombatWeapon::SetIdealActivity( Activity ideal )
 {
 	MDLCACHE_CRITICAL_SECTION();
+
+#ifdef CLIENT_DLL
+	// The local weapon entity uses its world model for presentation in either
+	// camera mode, while the server selects and times ACT_VM_* sequences from
+	// the view model.  Select on that same model, then restore the render model.
+	int nFoFRenderModelIndex = -1;
+	C_BasePlayer *pLocalPlayer = C_BasePlayer::GetLocalPlayer();
+	if ( pLocalPlayer && GetOwner() == pLocalPlayer )
+	{
+		const char *pszViewModel = GetViewModel( m_nViewModelIndex );
+		const int nViewModelIndex = pszViewModel ?
+			modelinfo->GetModelIndex( pszViewModel ) : -1;
+		if ( nViewModelIndex != -1 && GetModelIndex() != nViewModelIndex )
+		{
+			nFoFRenderModelIndex = GetModelIndex();
+			SetModel( pszViewModel );
+		}
+	}
+#endif
+
 	int	idealSequence = SelectWeightedSequence( ideal );
 
 	if ( idealSequence == -1 )
+	{
+#ifdef CLIENT_DLL
+		if ( nFoFRenderModelIndex != -1 )
+			SetModelIndex( nFoFRenderModelIndex );
+#endif
 		return false;
+	}
 
 	//Take the new activity
 	m_IdealActivity	 = ideal;
@@ -2400,8 +2652,15 @@ bool CBaseCombatWeapon::SetIdealActivity( Activity ideal )
 		SendViewModelAnim( m_nIdealSequence );
 	}
 
+	const float flSequenceDuration = SequenceDuration();
+
+#ifdef CLIENT_DLL
+	if ( nFoFRenderModelIndex != -1 )
+		SetModelIndex( nFoFRenderModelIndex );
+#endif
+
 	//Set the next time the weapon will idle
-	SetWeaponIdleTime( gpGlobals->curtime + SequenceDuration() );
+	SetWeaponIdleTime( gpGlobals->curtime + flSequenceDuration );
 	return true;
 }
 
@@ -2448,21 +2707,47 @@ bool CBaseCombatWeapon::IsLocked( CBaseEntity *pAsker )
 //-----------------------------------------------------------------------------
 Activity CBaseCombatWeapon::ActivityOverride( Activity baseAct, bool *pRequired )
 {
-	int actCount = 0;
-	acttable_t *pTable = ActivityList( actCount );
+	acttable_t *pTable = ActivityList();
+	int nTableCount = ActivityListCount();
 
-	for ( int i = 0; i < actCount; i++ )
+	CFoF_Player *pPlayer =
+		dynamic_cast< CFoF_Player * >( GetOwner() );
+	if ( pPlayer && pPlayer->IsAlive() )
 	{
-		const acttable_t& act = pTable[i];
-		if ( baseAct == act.baseAct )
+		if ( pPlayer->HasDualActiveWeapons() )
 		{
-			if (pRequired)
+			pTable = ActivityListAlternate();
+			nTableCount = ActivityListAlternateCount();
+		}
+		else if ( FoFHandStance( pPlayer ) == 1 &&
+			ActivityListThirdCount() > 0 )
+		{
+			CBaseCombatWeapon *pActiveWeapon = pPlayer->GetActiveWeapon();
+			CBaseCombatWeapon *pSecondWeapon = pPlayer->GetActiveWeapon2();
+			if ( pActiveWeapon && pActiveWeapon->CanDualWield() &&
+				FoFSightExpFactor( pPlayer ) > 0.5f &&
+				( !pSecondWeapon || !pSecondWeapon->CanDualWield() ) )
 			{
-				*pRequired = act.required;
+				pTable = ActivityListThird();
+				nTableCount = ActivityListThirdCount();
 			}
-			return (Activity)act.weaponAct;
 		}
 	}
+
+	if ( !pTable || nTableCount <= 0 )
+		return baseAct;
+
+	for ( int i = 0; i < nTableCount; ++i )
+	{
+		const acttable_t &entry = pTable[i];
+		if ( entry.baseAct == 0 || entry.baseAct != baseAct )
+			continue;
+
+		if ( pRequired )
+			*pRequired = entry.required;
+		return static_cast< Activity >( entry.weaponAct );
+	}
+
 	return baseAct;
 }
 
@@ -2579,7 +2864,8 @@ BEGIN_PREDICTION_DATA( CBaseCombatWeapon )
 	// Networked
 	DEFINE_PRED_FIELD( m_hOwner, FIELD_EHANDLE, FTYPEDESC_INSENDTABLE ),
 	// DEFINE_FIELD( m_hWeaponFileInfo, FIELD_SHORT ),
-	DEFINE_PRED_FIELD( m_iState, FIELD_INTEGER, FTYPEDESC_INSENDTABLE ),			 
+	DEFINE_PRED_FIELD( m_iState, FIELD_INTEGER,
+		FTYPEDESC_INSENDTABLE | FTYPEDESC_NOERRORCHECK ),
 	DEFINE_PRED_FIELD( m_iViewModelIndex, FIELD_INTEGER, FTYPEDESC_INSENDTABLE | FTYPEDESC_MODELINDEX ),
 	DEFINE_PRED_FIELD( m_iWorldModelIndex, FIELD_INTEGER, FTYPEDESC_INSENDTABLE | FTYPEDESC_MODELINDEX ),
 	DEFINE_PRED_FIELD_TOL( m_flNextPrimaryAttack, FIELD_FLOAT, FTYPEDESC_INSENDTABLE, TD_MSECTOLERANCE ),	
@@ -2858,6 +3144,10 @@ BEGIN_NETWORK_TABLE(CBaseCombatWeapon, DT_BaseCombatWeapon)
 	SendPropModelIndex( SENDINFO(m_iWorldModelIndex) ),
 	SendPropInt( SENDINFO(m_iState ), 8, SPROP_UNSIGNED ),
 	SendPropEHandle( SENDINFO(m_hOwner) ),
+#if defined( GAME_DLL )
+	SendPropBool( SENDINFO_NOCHECK( m_bFiresUnderwater ) ),
+	SendPropIntWithMinusOneFlag( SENDINFO( m_iClip1 ), 8 ),
+#endif
 #else
 	RecvPropDataTable("LocalWeaponData", 0, 0, &REFERENCE_RECV_TABLE(DT_LocalWeaponData)),
 	RecvPropDataTable("LocalActiveWeaponData", 0, 0, &REFERENCE_RECV_TABLE(DT_LocalActiveWeaponData)),
@@ -2865,5 +3155,9 @@ BEGIN_NETWORK_TABLE(CBaseCombatWeapon, DT_BaseCombatWeapon)
 	RecvPropInt( RECVINFO(m_iWorldModelIndex)),
 	RecvPropInt( RECVINFO(m_iState), 0, &CBaseCombatWeapon::RecvProxy_WeaponState ),
 	RecvPropEHandle( RECVINFO(m_hOwner ) ),
+	// Fistful of Frags exposes these two fields directly on
+	// DT_BaseCombatWeapon in addition to its LocalWeaponData table.
+	RecvPropBool( RECVINFO( m_bFiresUnderwater ) ),
+	RecvPropIntWithMinusOneFlag( RECVINFO( m_iClip1 ) ),
 #endif
 END_NETWORK_TABLE()

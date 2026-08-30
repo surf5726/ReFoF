@@ -245,8 +245,9 @@ public:
 typedef IServerTools IServerTools001;
 typedef IServerTools IServerTools002;
 
-// AlliedModders - Shim until all supported mods are using the SDK Base that has this
-#if 0
+// FoF uses VSERVERTOOLS003. Keep VSERVERTOOLS002 for non-game targets and
+// select the game-server interface under GAME_DLL.
+#if defined( GAME_DLL )
 #define VSERVERTOOLS_INTERFACE_VERSION_1	"VSERVERTOOLS001"
 #define VSERVERTOOLS_INTERFACE_VERSION_2	"VSERVERTOOLS002"
 #define VSERVERTOOLS_INTERFACE_VERSION		"VSERVERTOOLS003"

@@ -146,7 +146,9 @@ BEGIN_PREDICTION_DATA( CWeaponStunStick )
 END_PREDICTION_DATA()
 
 LINK_ENTITY_TO_CLASS( weapon_stunstick, CWeaponStunStick );
+#if !defined( GAME_DLL )
 PRECACHE_WEAPON_REGISTER( weapon_stunstick );
+#endif
 
 
 #ifndef CLIENT_DLL

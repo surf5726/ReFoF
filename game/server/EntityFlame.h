@@ -10,12 +10,11 @@
 #pragma once
 #endif
 
-#define FLAME_DAMAGE_INTERVAL			0.2f // How often to deal damage.
+#define FLAME_THINK_INTERVAL			0.4f
+#define FLAME_DAMAGE_INTERVAL			2.0f
+#define FLAME_DAMAGE					8.0f
 #define FLAME_DIRECT_DAMAGE_PER_SEC		5.0f
 #define FLAME_RADIUS_DAMAGE_PER_SEC		4.0f
-
-#define FLAME_DIRECT_DAMAGE ( FLAME_DIRECT_DAMAGE_PER_SEC * FLAME_DAMAGE_INTERVAL )
-#define FLAME_RADIUS_DAMAGE ( FLAME_RADIUS_DAMAGE_PER_SEC * FLAME_DAMAGE_INTERVAL )
 
 #define FLAME_MAX_LIFETIME_ON_DEAD_NPCS	10.0f
 
@@ -52,6 +51,7 @@ protected:
 
 	void	FlameThink( void );
 
+	bool m_bCheapEffect;
 	CNetworkHandle( CBaseEntity, m_hEntAttached );		// The entity that we are burning (attached to).
 
 	CNetworkVar( float, m_flSize );
@@ -60,7 +60,12 @@ protected:
 	CNetworkVar( float, m_flHitboxFireScale );
 
 	CNetworkVar( float, m_flLifetime );
+#if defined( HL2MP )
+	CNetworkVar( int, m_nMode );
+#endif
 	bool	m_bPlayingSound;
+	float	m_flNextDamage;
+	EHANDLE	m_hAttacker;
 };
 
 #endif // ENTITYFLAME_H

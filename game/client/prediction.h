@@ -74,6 +74,7 @@ public:
 	virtual void	SetLocalViewAngles( QAngle& ang );
 
 	virtual void	RunCommand( C_BasePlayer *player, CUserCmd *ucmd, IMoveHelper *moveHelper );
+	virtual void	CheckMovingGround( C_BasePlayer *player, double frametime );
 
 // Internal
 protected:

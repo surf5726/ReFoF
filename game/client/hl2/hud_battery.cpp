@@ -92,9 +92,10 @@ void CHudBattery::VidInit( void )
 //-----------------------------------------------------------------------------
 bool CHudBattery::ShouldDraw( void )
 {
-	bool bNeedsDraw = ( m_iBat != m_iNewBat ) || ( GetAlpha() > 0 );
-
-	return ( bNeedsDraw && CHudElement::ShouldDraw() );
+	// FoF has no HEV armor display.  Retain the registered stock element for
+	// layout/ABI compatibility without allowing its unconfigured HudSuit panel
+	// to appear as a coloured square.
+	return false;
 }
 
 //-----------------------------------------------------------------------------

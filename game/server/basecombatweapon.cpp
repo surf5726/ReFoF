@@ -27,6 +27,10 @@
 #include "iservervehicle.h"
 #include "func_break.h"
 
+#if defined( HL2MP )
+#include "fof/fof_player_statistics.h"
+#endif
+
 #ifdef HL2MP
 	#include "hl2mp_gamerules.h"
 #endif
@@ -716,6 +720,10 @@ void CBaseCombatWeapon::Use( CBaseEntity *pActivator, CBaseEntity *pCaller, USE_
 	{
 		m_OnPlayerUse.FireOutput( pActivator, pCaller );
 
+#if defined( HL2MP )
+		FoFTrackLevelWeaponUse( this, pPlayer );
+#endif
+
 		//
 		// Bump the weapon to try equipping it before picking it up physically. This is
 		// important in a few spots in the game where the player could potentially +use pickup
@@ -731,4 +739,3 @@ void CBaseCombatWeapon::Use( CBaseEntity *pActivator, CBaseEntity *pCaller, USE_
 		}
 	}
 }
-

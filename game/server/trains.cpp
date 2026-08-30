@@ -1236,7 +1236,13 @@ LINK_ENTITY_TO_CLASS( func_tracktrain, CFuncTrackTrain );
 //-----------------------------------------------------------------------------
 // Datatable
 //-----------------------------------------------------------------------------
+#if defined( HL2MP )
+IMPLEMENT_SERVERCLASS_ST_NOBASE( CFuncTrackTrain, DT_FuncTrackTrain )
+	SendPropDataTable( "baseclass", 0, CBaseToggle::m_pClassSendTable,
+		SendProxy_DataTableToDataTable ),
+#else
 IMPLEMENT_SERVERCLASS_ST( CFuncTrackTrain, DT_FuncTrackTrain )
+#endif
 END_SEND_TABLE()
 
 

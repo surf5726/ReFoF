@@ -55,6 +55,14 @@ public:
 //		m_bUseExplicitViewVector = false;
         m_bViewToProjectionOverride = false;
 		m_eStereoEye = STEREO_EYE_MONO;
+		m_bDoDepthOfField = false;
+		m_flNearBlurDepth = 20.0f;
+		m_flNearFocusDepth = 100.0f;
+		m_flFarFocusDepth = 250.0f;
+		m_flFarBlurDepth = 1000.0f;
+		m_flNearBlurRadius = 10.0f;
+		m_flFarBlurRadius = 5.0f;
+		m_nDoFQuality = 0;
 	}
 
 // shared by 2D & 3D views
@@ -129,6 +137,17 @@ public:
 	// This does NOT override the Z range - that will be set up as normal (i.e. the values in this matrix will be ignored).
     bool        m_bViewToProjectionOverride;
     VMatrix     m_ViewToProjection;
+
+	// The engine appends these depth-of-field controls after the projection
+	// override matrix. Preserve this order for view-setup ABI compatibility.
+	bool		m_bDoDepthOfField;
+	float		m_flNearBlurDepth;
+	float		m_flNearFocusDepth;
+	float		m_flFarFocusDepth;
+	float		m_flFarBlurDepth;
+	float		m_flNearBlurRadius;
+	float		m_flFarBlurRadius;
+	int			m_nDoFQuality;
 };
 
 

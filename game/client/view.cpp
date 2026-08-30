@@ -15,6 +15,7 @@
 #include "prediction.h"
 #include "viewrender.h"
 #include "c_te_legacytempents.h"
+#include "fof/fof_client_settings.h"
 #include "cl_mat_stub.h"
 #include "tier0/vprof.h"
 #include "iclientvehicle.h"
@@ -83,7 +84,9 @@ extern bool g_bRenderingScreenshot;
 extern ConVar sensitivity;
 #endif
 
-ConVar zoom_sensitivity_ratio( "zoom_sensitivity_ratio", "1.0", 0, "Additional mouse sensitivity scale factor applied when FOV is zoomed in." );
+ConVar zoom_sensitivity_ratio(
+	"zoom_sensitivity_ratio", "0.5", FCVAR_ARCHIVE | FCVAR_USERINFO,
+	"Additional mouse sensitivity scale factor applied when FOV is zoomed in." );
 
 CViewRender g_DefaultViewRender;
 IViewRender *view = NULL;	// set in cldll_client_init.cpp if no mod creates their own
@@ -107,13 +110,6 @@ extern ConVar cl_forwardspeed;
 static ConVar v_centermove( "v_centermove", "0.15");
 static ConVar v_centerspeed( "v_centerspeed","500" );
 
-#ifdef TF_CLIENT_DLL
-// 54 degrees approximates a 35mm camera - we determined that this makes the viewmodels
-// and motions look the most natural.
-ConVar v_viewmodel_fov( "viewmodel_fov", "54", FCVAR_ARCHIVE, "Sets the field-of-view for the viewmodel.", true, 0.1, true, 179.9 );
-#else
-ConVar v_viewmodel_fov( "viewmodel_fov", "54", FCVAR_CHEAT, "Sets the field-of-view for the viewmodel.", true, 0.1, true, 179.9 );
-#endif
 ConVar mat_viewportscale( "mat_viewportscale", "1.0", FCVAR_ARCHIVE, "Scale down the main viewport (to reduce GPU impact on CPU profiling)", true, (1.0f / 640.0f), true, 1.0f );
 ConVar mat_viewportupscale( "mat_viewportupscale", "1", FCVAR_ARCHIVE, "Scale the viewport back up" );
 ConVar cl_leveloverview( "cl_leveloverview", "0", FCVAR_CHEAT );
@@ -535,8 +531,12 @@ void CViewRender::OnRenderStart()
 		else
 #endif
 		{
+			float flZoomSensitivityRatio = zoom_sensitivity_ratio.GetFloat();
+			const bool bUseZoomSensitivity = FoFResolveZoomSensitivity(
+				player, localFOV, iDefaultFOV, flZoomSensitivityRatio );
+
 			// No override, don't use huge sensitivity
-			if ( localFOV == iDefaultFOV )
+			if ( !bUseZoomSensitivity )
 			{
 #ifndef _XBOX
 				// reset to saved sensitivity
@@ -552,9 +552,9 @@ void CViewRender::OnRenderStart()
 					Assert(0); // would divide by zero, something is broken with iDefatulFOV
 					iDefaultFOV = 1;
 				}
-				gHUD.m_flFOVSensitivityAdjust = 
+				gHUD.m_flFOVSensitivityAdjust =
 					((float)localFOV / (float)iDefaultFOV) * // linear fov downscale
-					zoom_sensitivity_ratio.GetFloat(); // sensitivity scale factor
+					flZoomSensitivityRatio; // sensitivity scale factor
 #ifndef _XBOX
 				gHUD.m_flMouseSensitivity = gHUD.m_flFOVSensitivityAdjust * sensitivity.GetFloat(); // regular sensitivity
 #endif
@@ -1353,4 +1353,3 @@ CON_COMMAND( getpos, "dump position and angles to the console" )
 	Warning( "%s %f %f %f;", pCommand1, vecOrigin.x, vecOrigin.y, vecOrigin.z );
 	Warning( "%s %f %f %f\n", pCommand2, angles.x, angles.y, angles.z );
 }
-

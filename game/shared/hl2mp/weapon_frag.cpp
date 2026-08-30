@@ -130,7 +130,9 @@ END_PREDICTION_DATA()
 #endif
 
 LINK_ENTITY_TO_CLASS( weapon_frag, CWeaponFrag );
+#if !defined( GAME_DLL )
 PRECACHE_WEAPON_REGISTER(weapon_frag);
+#endif
 
 CWeaponFrag::CWeaponFrag( void ) :
 	CBaseHL2MPCombatWeapon()
@@ -549,4 +551,3 @@ void CWeaponFrag::RollGrenade( CBasePlayer *pPlayer )
 
 	m_bRedraw = true;
 }
-

@@ -64,6 +64,8 @@
 #endif
 #include "rendertexture.h"
 #include "viewpostprocess.h"
+#include "fof/fof_postprocess_effects.h"
+#include "fof/fof_player_shared.h"
 #include "viewdebug.h"
 
 #if defined USES_ECON_ITEMS
@@ -927,6 +929,62 @@ void CSimpleRenderExecutor::AddView( CRendering3dView *pView )
 //-----------------------------------------------------------------------------
 // Constructor
 //-----------------------------------------------------------------------------
+void CViewRender::DrawFoFScope( const CViewSetup &cameraView )
+{
+	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+	if ( !pPlayer )
+		return;
+
+	C_BasePlayer *pScopePlayer = pPlayer;
+	if ( pPlayer->GetObserverMode() == OBS_MODE_IN_EYE )
+	{
+		C_BasePlayer *pTarget = ToBasePlayer( pPlayer->GetObserverTarget() );
+		if ( pTarget && pTarget != pPlayer && !pTarget->IsObserver() )
+			pScopePlayer = pTarget;
+	}
+
+	C_BaseCombatWeapon *pWeapon = pScopePlayer->GetActiveWeapon();
+	const char *pszClassname = pWeapon ? pWeapon->GetClassname() : NULL;
+	if ( !pszClassname || Q_stricmp( pszClassname, "weapon_sharps" ) )
+		return;
+
+	ITexture *pScopeTarget =
+		materials->FindTexture( "_rt_Scope", TEXTURE_GROUP_RENDER_TARGET );
+	if ( !pScopeTarget || pScopeTarget->IsError() )
+		return;
+
+	CViewSetup scopeView = cameraView;
+	scopeView.x = 0;
+	scopeView.y = 0;
+	scopeView.width = pScopeTarget->GetActualWidth();
+	scopeView.height = pScopeTarget->GetActualHeight();
+	scopeView.m_bOrtho = false;
+	scopeView.fov = 10.0f;
+	scopeView.m_flAspectRatio = 1.0f;
+	scopeView.m_bViewToProjectionOverride = false;
+
+	Frustum frustum;
+	render->Push3DView(
+		scopeView,
+		VIEW_CLEAR_DEPTH | VIEW_CLEAR_COLOR,
+		pScopeTarget,
+		(VPlane *)frustum );
+
+	if ( FoFSightExpFactor( pScopePlayer ) > 0.0f )
+	{
+		ViewDrawScene(
+			false, SKYBOX_2DSKYBOX_VISIBLE,
+			scopeView, 0, VIEW_MONITOR );
+	}
+	else
+	{
+		CMatRenderContextPtr pRenderContext( materials );
+		pRenderContext->ClearBuffers( true, true, false );
+	}
+
+	render->PopView( frustum );
+}
+
 CViewRender::CViewRender()
 	: m_SimpleExecutor( this )
 {
@@ -1965,6 +2023,13 @@ void CViewRender::RenderView( const CViewSetup &view, int nClearFlags, int whatT
 		}
 	#endif
 
+		if ( ( g_pMaterialSystemHardwareConfig->GetDXSupportLevel() >= 70 ) &&
+			( ( whatToDraw & RENDERVIEW_SUPPRESSMONITORRENDERING ) == 0 ) )
+		{
+			CViewSetup viewMiddle = GetView( STEREO_EYE_MONO );
+			DrawFoFScope( viewMiddle );
+		}
+
 		g_bRenderingView = true;
 
 		// Must be first 
@@ -2026,6 +2091,8 @@ void CViewRender::RenderView( const CViewSetup &view, int nClearFlags, int whatT
 		// Image-space motion blur
 		if ( !building_cubemaps.GetBool() && view.m_bDoBloomAndToneMapping ) // We probably should use a different view. variable here
 		{
+			FoFApplyDepthOfField( view );
+
 			if ( ( mat_motion_blur_enabled.GetInt() ) && ( g_pMaterialSystemHardwareConfig->GetDXSupportLevel() >= 90 ) )
 			{
 				pRenderContext.GetFrom( materials );
@@ -5391,6 +5458,59 @@ void CBaseWorldView::DrawExecute( float waterHeight, view_id_t viewID, float wat
 		DrawWorld( waterZAdjust );
 		DrawOpaqueRenderables( DepthMode );
 
+		// A first-person local player is either absent from the world leaf lists
+		// or registered in the view-model render group.  Those lists have already
+		// been prepared by the time a reflection view is drawn, so changing the
+		// render group here cannot make the player appear in this pass.  Draw the
+		// local world presentation explicitly while the reflection target and its
+		// clip plane are active.  Third-person cameras already put these entities
+		// in the ordinary world list and must not draw them a second time.
+		if ( viewID == VIEW_REFLECTION &&
+			C_BasePlayer::LocalPlayerInFirstPersonView() )
+		{
+			C_BasePlayer *pLocalPlayer = C_BasePlayer::GetLocalPlayer();
+			if ( pLocalPlayer && pLocalPlayer->ShouldDraw() )
+			{
+				pLocalPlayer->InvalidateBoneCache();
+				DrawOpaqueRenderable(
+					pLocalPlayer->GetClientRenderable(), false, DepthMode );
+
+				C_BaseCombatWeapon *pFirstWeapon =
+					pLocalPlayer->GetActiveWeapon1();
+				C_BaseCombatWeapon *pSecondWeapon =
+					pLocalPlayer->GetActiveWeapon2();
+				if ( pFirstWeapon && pFirstWeapon->ShouldDraw() )
+				{
+					const int nSavedModelIndex =
+						pFirstWeapon->GetModelIndex();
+					const int nWorldModelIndex =
+						pFirstWeapon->GetWorldModelIndex();
+					if ( nWorldModelIndex != nSavedModelIndex )
+						pFirstWeapon->SetModelIndex( nWorldModelIndex );
+					pFirstWeapon->InvalidateBoneCache();
+					DrawOpaqueRenderable(
+						pFirstWeapon->GetClientRenderable(), false, DepthMode );
+					if ( nWorldModelIndex != nSavedModelIndex )
+						pFirstWeapon->SetModelIndex( nSavedModelIndex );
+				}
+				if ( pSecondWeapon && pSecondWeapon != pFirstWeapon &&
+					pSecondWeapon->ShouldDraw() )
+				{
+					const int nSavedModelIndex =
+						pSecondWeapon->GetModelIndex();
+					const int nWorldModelIndex =
+						pSecondWeapon->GetWorldModelIndex();
+					if ( nWorldModelIndex != nSavedModelIndex )
+						pSecondWeapon->SetModelIndex( nWorldModelIndex );
+					pSecondWeapon->InvalidateBoneCache();
+					DrawOpaqueRenderable(
+						pSecondWeapon->GetClientRenderable(), false, DepthMode );
+					if ( nWorldModelIndex != nSavedModelIndex )
+						pSecondWeapon->SetModelIndex( nSavedModelIndex );
+				}
+			}
+		}
+
 #ifdef TF_CLIENT_DLL
 		bool bVisionOverride = ( localplayer_visionflags.GetInt() & ( 0x01 ) ); // Pyro-vision Goggles
 
@@ -6187,13 +6307,51 @@ void CReflectiveGlassView::Draw()
 	CMatRenderContextPtr pRenderContext( materials );
 	PIXEVENT( pRenderContext, "CReflectiveGlassView::Draw" );
 
+	// Reflective glass uses the same reflected scene semantics as water, but
+	// the stock glass path never identifies itself as a reflection view.  FoF
+	// needs that identity so the local third-person player is admitted to the
+	// reflected render list without making it visible in the main first-person
+	// scene.
+	const view_id_t nSavedViewID = CurrentViewID();
+	const Vector vecSavedViewOrigin = CurrentViewOrigin();
+	const QAngle angSavedViewAngles = CurrentViewAngles();
+	SetupCurrentView( origin, angles, VIEW_REFLECTION );
+
+	// Give first-person local entities valid world render handles for the
+	// explicit reflection draw in CBaseWorldView::DrawExecute.  Render-list
+	// insertion itself is intentionally not relied upon here: that stage has
+	// already completed for this frame.
+	C_BasePlayer *pLocalPlayer = C_BasePlayer::GetLocalPlayer();
+	if ( pLocalPlayer )
+	{
+		pLocalPlayer->UpdateVisibility();
+		for ( int i = 0; i < pLocalPlayer->WeaponCount(); ++i )
+		{
+			C_BaseCombatWeapon *pWeapon = pLocalPlayer->GetWeapon( i );
+			if ( pWeapon )
+				pWeapon->UpdateVisibility();
+		}
+	}
+
 	// Disable occlusion visualization in reflection
 	bool bVisOcclusion = r_visocclusion.GetInt();
 	r_visocclusion.SetValue( 0 );
-				   
+
 	BaseClass::Draw();
 
 	r_visocclusion.SetValue( bVisOcclusion );
+	SetupCurrentView(
+		vecSavedViewOrigin, angSavedViewAngles, nSavedViewID );
+	if ( pLocalPlayer )
+	{
+		pLocalPlayer->UpdateVisibility();
+		for ( int i = 0; i < pLocalPlayer->WeaponCount(); ++i )
+		{
+			C_BaseCombatWeapon *pWeapon = pLocalPlayer->GetWeapon( i );
+			if ( pWeapon )
+				pWeapon->UpdateVisibility();
+		}
+	}
 
 	pRenderContext->ClearColor4ub( 0, 0, 0, 255 );
 	pRenderContext->Flush();

@@ -32,8 +32,18 @@ void SendProxy_PlayerList( const SendProp *pProp, const void *pStruct, const voi
 int SendProxyArrayLength_PlayerArray( const void *pStruct, int objectID )
 {
 	CTeam *pTeam = (CTeam*)pStruct;
+#if defined( HL2MP )
+	return MIN( pTeam->m_aPlayers.Count(), 25 );
+#else
 	return pTeam->m_aPlayers.Count();
+#endif
 }
+
+#if defined( HL2MP )
+static const int FOF_TEAM_PLAYER_ARRAY_COUNT = 25;
+#else
+static const int FOF_TEAM_PLAYER_ARRAY_COUNT = MAX_PLAYERS;
+#endif
 
 
 // Datatable
@@ -46,7 +56,7 @@ IMPLEMENT_SERVERCLASS_ST_NOBASE(CTeam, DT_Team)
 	SendPropArray2( 
 		SendProxyArrayLength_PlayerArray,
 		SendPropInt("player_array_element", 0, 4, 10, SPROP_UNSIGNED, SendProxy_PlayerList), 
-		MAX_PLAYERS, 
+		FOF_TEAM_PLAYER_ARRAY_COUNT,
 		0, 
 		"player_array"
 		)

@@ -87,7 +87,6 @@ class CFuncLadder;
 class CNavArea;
 class CHintSystem;
 class CAI_Expresser;
-
 #if defined USES_ECON_ITEMS
 class CEconWearable;
 #endif // USES_ECON_ITEMS
@@ -248,6 +247,13 @@ public:
 	
 	CBasePlayer();
 	~CBasePlayer();
+
+#if defined( HL2MP )
+	// FoF places the derived m_iAmmo no-argument callback at the first
+	// CBasePlayer-specific vtable slot. Declaring it beside the network data
+	// would append it after the rest of CBasePlayer's virtuals instead.
+	virtual void NetworkStateChanged_m_iAmmo( void );
+#endif
 
 	// IPlayerInfo passthrough (because we can't do multiple inheritance)
 	IPlayerInfo *GetPlayerInfo() { return &m_PlayerInfo; }
@@ -416,6 +422,10 @@ public:
 	virtual bool			Weapon_ShouldSelectItem( CBaseCombatWeapon *pWeapon );
 	void					Weapon_DropSlot( int weaponSlot );
 	CBaseCombatWeapon		*GetLastWeapon( void ) { return m_hLastWeapon.Get(); }
+#if defined( HL2MP )
+	void					Weapon_SetLast2( CBaseCombatWeapon *pWeapon );
+	CBaseCombatWeapon		*GetLastWeapon2( void );
+#endif
 
 	virtual void			OnMyWeaponFired( CBaseCombatWeapon *weapon );	// call this when this player fires a weapon to allow other systems to react
 	virtual float			GetTimeSinceWeaponFired( void ) const;			// returns the time, in seconds, since this player fired a weapon
@@ -515,7 +525,7 @@ public:
 	bool 					HasWeapons( void );// do I have ANY weapons?
 	virtual void			SelectLastItem(void);
 	virtual void 			SelectItem( const char *pstr, int iSubType = 0 );
-	void					ItemPreFrame( void );
+	virtual void			ItemPreFrame( void );
 	virtual void			ItemPostFrame( void );
 	virtual CBaseEntity		*GiveNamedItem( const char *szName, int iSubType = 0 );
 	void					EnableControl(bool fControl);
@@ -590,6 +600,11 @@ public:
 	// Team Handling
 	virtual void			ChangeTeam( int iTeamNum ) { ChangeTeam(iTeamNum,false, false); }
 	virtual void			ChangeTeam( int iTeamNum, bool bAutoTeam, bool bSilent );
+#if defined( HL2MP )
+	// FoF adds this player-model hook at the base-player ABI level.
+	// CHL2MP_Player and CFoF_Player override it below the same vtable slot.
+	virtual void			SetPlayerModel( void );
+#endif
 
 	// say/sayteam allowed?
 	virtual bool		CanHearAndReadChatFrom( CBasePlayer *pPlayer ) { return true; }
@@ -613,6 +628,13 @@ public:
 	virtual void			HandleAnimEvent( animevent_t *pEvent );
 
 	virtual bool			ShouldAnnounceAchievement( void );
+
+#if defined( HL2MP )
+	// FoF keeps these two player queries between the achievement and
+	// physics-shadow hooks. CFoF_Player supplies the reload/notoriety answers.
+	virtual bool			FoFIsReloading( void );
+	virtual int			GetFoFTotalNotoriety( void );
+#endif
 
 #if defined USES_ECON_ITEMS
 	// Wearables
@@ -665,6 +687,18 @@ public:
 	int		ArmorValue() const		{ return m_ArmorValue; }
 	bool	HUDNeedsRestart() const { return m_fInitHUD; }
 	float	MaxSpeed() const		{ return m_flMaxspeed; }
+#if defined( HL2MP )
+	bool	IsOnFoFHorse() const;
+	void	SetFoFOnHorse( bool bOnHorse );
+	float	GetFoFHorseAcceleration() const;
+	void	SetFoFHorseAcceleration( float flAcceleration );
+	float	GetFoFSlideForce() const;
+	float	GetFoFPainFinishedTime() const;
+	float	GetFoFKickTime() const;
+	void	SetFoFKickTime( float flTime );
+	float	GetFoFKickedPenaltyTime() const;
+	void	SetFoFKickedPenaltyTime( float flTime );
+#endif
 	Activity GetActivity( ) const	{ return m_Activity; }
 	inline void SetActivity( Activity eActivity ) { m_Activity = eActivity; }
 	bool	IsPlayerLockedInPlace() const { return m_iPlayerLocked != 0; }
@@ -721,6 +755,7 @@ public:
 
 	// For debugging...
 	void	ForceOrigin( const Vector &vecOrigin );
+	bool	HasForcedOrigin( void ) const;
 
 	// Bot accessors...
 	void	SetTimeBase( float flTimeBase );
@@ -754,6 +789,9 @@ public:
 	void	DeactivateMovementConstraint( );
 
 	// talk control
+#if defined( HL2MP )
+	virtual bool CanPlayerTalk();
+#endif
 	void	NotePlayerTalked() { m_fLastPlayerTalkTime = gpGlobals->curtime; }
 	float	LastTimePlayerTalked() { return m_fLastPlayerTalkTime; }
 
@@ -854,7 +892,11 @@ public:
 
 	IMPLEMENT_NETWORK_VAR_FOR_DERIVED( m_vecViewOffset );
 	IMPLEMENT_NETWORK_VAR_FOR_DERIVED( m_flFriction );
+#if defined( HL2MP )
+	virtual void NetworkStateChanged_m_iAmmo( void *pVar );
+#else
 	IMPLEMENT_NETWORK_VAR_FOR_DERIVED( m_iAmmo );
+#endif
 	
 	IMPLEMENT_NETWORK_VAR_FOR_DERIVED( m_hGroundEntity );
 
@@ -1046,7 +1088,17 @@ private:
 
 	// from edict_t
 	// CBasePlayer doesn't send this but CCSPlayer does.
+#if defined( HL2MP )
+	// FoF's CBasePlayer exposes only the pointer-taking derived-network
+	// callback here.  The SDK 2013 convenience macro adds a second virtual and
+	// shifts every following player slot.
+	virtual void NetworkStateChanged_m_ArmorValue( void *pVar );
+	NETWORK_VAR_START( int, m_ArmorValue )
+	NETWORK_VAR_END( int, m_ArmorValue, CNetworkVarBase,
+		NetworkStateChanged_m_ArmorValue )
+#else
 	CNetworkVarForDerived( int, m_ArmorValue );
+#endif
 	float					m_AirFinished;
 	float					m_PainFinished;
 
@@ -1100,6 +1152,28 @@ public:
 	float					m_flSideMove;
 	int						m_nNumCrateHudHints;
 
+#if defined( HL2MP )
+	// FoF extends CBasePlayer here.  Keep this declaration order in sync with
+	// the shipped server ABI: the local prediction fields occupy E10-E33,
+	// followed by the public horse/slide fields at E34-E43.
+	CNetworkVar( float, consecutiveJumps );
+	CNetworkVar( float, m_flKickTime );
+	CNetworkVar( float, m_flKickedPenaltyTime );
+	CNetworkVector( m_vecSlide );
+	CNetworkQAngle( m_angSlideView );
+	CNetworkVar( float, m_flSlideForce );
+	CNetworkVar( float, m_flJWallForce );
+	CNetworkVar( bool, m_bOnHorse );
+	CNetworkVar( float, m_flHorseAcc );
+
+	// Present in the shipped CBasePlayer layout.  The first two words are
+	// initialized but otherwise unused by the original server.  The third is
+	// the 20-command input budget consumed by ProcessUsercmds.
+	int						m_nFoFReservedE44;
+	int						m_nFoFReservedE48;
+	int						m_nFoFUserCmdInputBudget;
+#endif
+
 private:
 
 	// Used in test code to teleport the player to random locations in the map.
@@ -1113,6 +1187,9 @@ private:
 	float					m_fLastPlayerTalkTime;
 	
 	CNetworkVar( CBaseCombatWeaponHandle, m_hLastWeapon );
+#if defined( HL2MP )
+	CNetworkVar( CBaseCombatWeaponHandle, m_hLastWeapon2 );
+#endif
 
 #if !defined( NO_ENTITY_PREDICTION )
 	CUtlVector< CHandle< CBaseEntity > > m_SimulatedByThisPlayer;
@@ -1142,6 +1219,7 @@ protected:
 	// HACK FOR TF2 Prediction
 	friend class CTFGameMovementRecon;
 	friend class CGameMovement;
+	friend class CFoFGameMovement;
 	friend class CTFGameMovement;
 	friend class CHL1GameMovement;
 	friend class CCSGameMovement;	
@@ -1187,14 +1265,16 @@ public:
 	float  GetLaggedMovementValue( void ){ return m_flLaggedMovementValue;	}
 	void   SetLaggedMovementValue( float flValue ) { m_flLaggedMovementValue = flValue;	}
 
-	inline bool IsAutoKickDisabled( void ) const;
-	inline void DisableAutoKick( bool disabled );
-
 	void	DumpPerfToRecipient( CBasePlayer *pRecipient, int nMaxRecords );
 	// NVNT returns true if user has a haptic device
 	virtual bool HasHaptics(){return m_bhasHaptics;}
 	// NVNT sets weather a user should receive haptic device messages.
-	virtual void SetHaptics(bool has) { m_bhasHaptics = has;}
+	void SetHaptics(bool has) { m_bhasHaptics = has;}
+#if defined( HL2MP )
+	void OnVoiceTransmit( void );
+#endif
+	virtual bool IsAutoKickDisabled( void ) const;
+	virtual void DisableAutoKick( bool disabled );
 private:
 	// NVNT member variable holding if this user is using a haptic device.
 	bool m_bhasHaptics;

@@ -41,6 +41,19 @@ fltx4 Pow_FixedPoint_Exponent_SIMD( const fltx4 & x, int exponent)
 		return rslt;
 }
 
+#if defined( POSIX )
+// GCC 5 changed vector-type mangling; retain the name used by Linux32 SDK archives.
+extern "C" fltx4 Pow_FixedPoint_Exponent_SIMD_GCC4(
+	const fltx4 &x, int exponent )
+	__asm__( "_Z28Pow_FixedPoint_Exponent_SIMDRKU8__vectorfi" );
+
+extern "C" fltx4 Pow_FixedPoint_Exponent_SIMD_GCC4(
+	const fltx4 &x, int exponent )
+{
+	return Pow_FixedPoint_Exponent_SIMD( x, exponent );
+}
+#endif
+
 
 
 
