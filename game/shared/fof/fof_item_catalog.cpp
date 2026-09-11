@@ -2,6 +2,7 @@
 
 #include "cbase.h"
 #include "fof/fof_item_catalog.h"
+#include "tier1/utlvector.h"
 
 #include <xmmintrin.h>
 
@@ -136,10 +137,48 @@ const FoFItemDefinition_t *FoFItemDefinitionAt( int nIndex )
 
 const FoFItemDefinition_t *FoFFindItemDefinitionById( int nItem )
 {
+	// Build the sparse ID index from the catalogue so its presentation order
+	// and future item additions do not require a second hand-maintained table.
+	struct FoFItemIdIndex
+	{
+		FoFItemIdIndex()
+		{
+			int nMaxId = 0;
+			for ( int i = 0; i < ARRAYSIZE( s_FoFItemDefinitions ); ++i )
+				nMaxId = MAX( nMaxId, s_FoFItemDefinitions[i].m_nItem );
+			items.SetCount( nMaxId + 1 );
+			for ( int i = 0; i < items.Count(); ++i )
+				items[i] = NULL;
+			for ( int i = 0; i < ARRAYSIZE( s_FoFItemDefinitions ); ++i )
+			{
+				const FoFItemDefinition_t &item = s_FoFItemDefinitions[i];
+				Assert( item.m_nItem >= 0 && !items[item.m_nItem] );
+				items[item.m_nItem] = &item;
+			}
+		}
+
+		CUtlVector< const FoFItemDefinition_t * > items;
+	};
+	static const FoFItemIdIndex index;
+	return index.items.IsValidIndex( nItem ) ? index.items[nItem] : NULL;
+}
+
+const FoFItemDefinition_t *FoFFindItemDefinitionByClassname(
+	const char *pszClassname )
+{
+	if ( !pszClassname || !pszClassname[0] )
+		return NULL;
+
 	for ( int i = 0; i < ARRAYSIZE( s_FoFItemDefinitions ); ++i )
 	{
-		if ( s_FoFItemDefinitions[i].m_nItem == nItem )
-			return &s_FoFItemDefinitions[i];
+		const FoFItemDefinition_t &item = s_FoFItemDefinitions[i];
+		if ( ( item.m_pszClassname &&
+			   !Q_stricmp( pszClassname, item.m_pszClassname ) ) ||
+			( item.m_pszOppositeHandClassname &&
+			  !Q_stricmp( pszClassname, item.m_pszOppositeHandClassname ) ) )
+		{
+			return &item;
+		}
 	}
 	return NULL;
 }

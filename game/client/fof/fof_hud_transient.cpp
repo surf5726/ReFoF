@@ -1027,48 +1027,35 @@ void CHudFoFTimer::Paint()
 
 // FoF HUD text drawing helpers.
 
-struct FoFWrappedLine
-{
-	wchar_t text[512];
-	int length;
-	int wide;
-	int tall;
-};
-
 void CHudFoF::DrawWide( const wchar_t *text, int x, int y, const Color &color, bool centered ) const
 {
 	if ( !text || !text[0] || m_hFont == vgui::INVALID_FONT )
 		return;
 
-	int wide = 0, tall = 0;
-	vgui::surface()->GetTextSize( m_hFont, text, wide, tall );
 	if ( centered )
+	{
+		int wide = 0, tall = 0;
+		vgui::surface()->GetTextSize( m_hFont, text, wide, tall );
 		x -= wide / 2;
+	}
 	vgui::surface()->DrawSetTextFont( m_hFont );
 	vgui::surface()->DrawSetTextColor( color );
 	vgui::surface()->DrawSetTextPos( x, y );
 	vgui::surface()->DrawPrintText( text, Q_wcslen( text ) );
 }
 
-void CHudFoF::DrawWrappedWide(
-	const wchar_t *text,
-	vgui::HFont font,
-	int x,
-	int y,
-	int maxWide,
-	int maxTall,
-	const Color &color,
-	int align ) const
+static void FoFBuildWrappedTextLayout( FoFWrappedTextLayout &layout,
+	const wchar_t *text, vgui::HFont font, int maxWide )
 {
-	if ( !text || !text[0] || font == vgui::INVALID_FONT ||
-		maxWide <= 0 || maxTall <= 0 )
-	{
-		return;
-	}
-
+	layout.font = font;
+	layout.maxWide = maxWide;
+	layout.text.SetCount( Q_wcslen( text ) + 1 );
+	Q_memcpy( layout.text.Base(), text,
+		layout.text.Count() * sizeof( wchar_t ) );
+	layout.lines.RemoveAll();
+	layout.totalTall = 0;
 	const wchar_t *cursor = text;
-	CUtlVector< FoFWrappedLine > lines;
-	int totalTall = 0;
+	const int fontTall = vgui::surface()->GetFontTall( font );
 	while ( *cursor )
 	{
 		while ( *cursor == L' ' )
@@ -1120,22 +1107,73 @@ void CHudFoF::DrawWrappedWide(
 		vgui::surface()->GetTextSize(
 			font, line.text, line.wide, line.tall );
 		line.tall = MAX(
-			line.tall,
-			vgui::surface()->GetFontTall( font ) );
-		totalTall += MAX( line.tall, 1 );
-		lines.AddToTail( line );
+			line.tall, fontTall );
+		layout.totalTall += MAX( line.tall, 1 );
+		layout.lines.AddToTail( line );
 
 		if ( next <= cursor )
 			++cursor;
 		else
 			cursor = next;
 	}
+}
 
-	int drawY = y + MAX( ( maxTall - totalTall ) / 2, 0 );
-	const int bottom = y + maxTall;
-	for ( int i = 0; i < lines.Count(); ++i )
+void CHudFoF::ClearWrappedTextCache()
+{
+	for ( int i = 0; i < ARRAYSIZE( m_WrappedTextCache ); ++i )
 	{
-		const FoFWrappedLine &line = lines[i];
+		m_WrappedTextCache[i].text.Purge();
+		m_WrappedTextCache[i].lines.Purge();
+	}
+	m_iNextWrappedTextSlot = 0;
+}
+
+void CHudFoF::DrawWrappedWide(
+	const wchar_t *text,
+	vgui::HFont font,
+	int x,
+	int y,
+	int maxWide,
+	int maxTall,
+	const Color &color,
+	int align ) const
+{
+	if ( !text || !text[0] || font == vgui::INVALID_FONT ||
+		maxWide <= 0 || maxTall <= 0 )
+	{
+		return;
+	}
+
+	// Cache by content, not localization pointers. Position, height, color and
+	// alignment only affect drawing; font/width changes require new wrapping.
+	const FoFWrappedTextLayout *pLayout = NULL;
+	for ( int i = 0; i < ARRAYSIZE( m_WrappedTextCache ); ++i )
+	{
+		const FoFWrappedTextLayout &entry = m_WrappedTextCache[i];
+		if ( entry.font == font && entry.maxWide == maxWide &&
+			entry.text.Count() > 0 && !Q_wcscmp( entry.text.Base(), text ) )
+		{
+			pLayout = &entry;
+			break;
+		}
+	}
+	if ( !pLayout )
+	{
+		FoFWrappedTextLayout &entry =
+			m_WrappedTextCache[m_iNextWrappedTextSlot];
+		m_iNextWrappedTextSlot =
+			( m_iNextWrappedTextSlot + 1 ) % ARRAYSIZE( m_WrappedTextCache );
+		FoFBuildWrappedTextLayout( entry, text, font, maxWide );
+		pLayout = &entry;
+	}
+
+	int drawY = y + MAX( ( maxTall - pLayout->totalTall ) / 2, 0 );
+	const int bottom = y + maxTall;
+	vgui::surface()->DrawSetTextFont( font );
+	vgui::surface()->DrawSetTextColor( color );
+	for ( int i = 0; i < pLayout->lines.Count(); ++i )
+	{
+		const FoFWrappedLine &line = pLayout->lines[i];
 		if ( drawY + line.tall > bottom )
 			break;
 
@@ -1145,8 +1183,6 @@ void CHudFoF::DrawWrappedWide(
 		else if ( align == 1 )
 			drawX += maxWide - line.wide;
 
-		vgui::surface()->DrawSetTextFont( font );
-		vgui::surface()->DrawSetTextColor( color );
 		vgui::surface()->DrawSetTextPos( drawX, drawY );
 		vgui::surface()->DrawPrintText(
 			line.text, line.length );

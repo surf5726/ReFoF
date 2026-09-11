@@ -1,4 +1,4 @@
-﻿// FoF HUD lifecycle coordinator and shared presentation state.
+// FoF HUD lifecycle coordinator and shared presentation state.
 
 #include "cbase.h"
 // Main FoF HUD implementation.
@@ -91,6 +91,7 @@ private:
 CHudFoF::CHudFoF( const char *elementName )
 	: CHudElement( elementName )
 	, BaseClass( NULL, "HudFoF" )
+	, m_iNextWrappedTextSlot( 0 )
 	, m_hFont( vgui::INVALID_FONT )
 	, m_hSmallFont( vgui::INVALID_FONT )
 	, m_hHintFont( vgui::INVALID_FONT )
@@ -332,6 +333,7 @@ void CHudFoF::Init()
 
 void CHudFoF::Reset()
 {
+	ClearWrappedTextCache();
 	if ( m_iMenuKind != FOF_MENU_TEXT )
 		ClearMenu();
 	m_Hint.Clear();
@@ -387,6 +389,7 @@ void CHudFoF::Reset()
 
 void CHudFoF::VidInit()
 {
+	ClearWrappedTextCache();
 	// Unlike a spawn ResetHUD, a video/level initialization must not retain a
 	// server text menu from the previous map.
 	ClearMenu();
@@ -759,6 +762,7 @@ void CHudFoF::UpdateEquipmentHelpTitleFont()
 void CHudFoF::ApplySchemeSettings( vgui::IScheme *scheme )
 {
 	BaseClass::ApplySchemeSettings( scheme );
+	ClearWrappedTextCache();
 	EnsureMenuTextures();
 	if ( m_iIconCommTexture < 0 )
 	{

@@ -1,4 +1,4 @@
-﻿#ifndef FOF_HUD_TRANSIENT_H
+#ifndef FOF_HUD_TRANSIENT_H
 #define FOF_HUD_TRANSIENT_H
 #ifdef _WIN32
 #pragma once
@@ -7,6 +7,7 @@
 #include "hudelement.h"
 #include "mathlib/vector.h"
 #include "tier1/utlstring.h"
+#include "tier1/utlvector.h"
 
 #include <vgui/VGUI.h>
 #include <vgui_controls/Panel.h>
@@ -43,6 +44,28 @@ private:
 };
 
 struct client_textmessage_t;
+
+struct FoFWrappedLine
+{
+	wchar_t text[512];
+	int length;
+	int wide;
+	int tall;
+};
+
+struct FoFWrappedTextLayout
+{
+	FoFWrappedTextLayout()
+		: font( vgui::INVALID_FONT ), maxWide( 0 ), totalTall( 0 )
+	{
+	}
+
+	vgui::HFont font;
+	int maxWide;
+	int totalTall;
+	CUtlVector< wchar_t > text;
+	CUtlVector< FoFWrappedLine > lines;
+};
 
 // Returns the FoF font selected by the original CHudMessage paths, or
 // INVALID_FONT when the ordinary unnamed Source message font should remain.

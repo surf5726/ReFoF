@@ -1,4 +1,4 @@
-﻿#ifndef FOF_ITEM_CATALOG_H
+#ifndef FOF_ITEM_CATALOG_H
 #define FOF_ITEM_CATALOG_H
 #ifdef _WIN32
 #pragma once
@@ -26,6 +26,8 @@ enum
 };
 
 const FoFItemDefinition_t *FoFFindItemDefinitionById( int nItem );
+const FoFItemDefinition_t *FoFFindItemDefinitionByClassname(
+	const char *pszClassname );
 const FoFItemDefinition_t *FoFFindItemDefinitionByToken(
 	const char *pszToken );
 int FoFItemStatisticsIndex( const char *pszToken );

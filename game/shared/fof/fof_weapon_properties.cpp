@@ -1,5 +1,6 @@
-﻿#include "cbase.h"
+#include "cbase.h"
 #include "fof/fof_player_shared.h"
+#include "fof/fof_item_catalog.h"
 #include "fof/fof_base_revolver.h"
 #include "fof/fof_weapon_activities.h"
 #include "hl2mp_weapon_parse.h"
@@ -7,28 +8,6 @@
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
-
-struct FoFWeaponHandPair_t
-{
-	const char *m_pszFirstHand;
-	const char *m_pszSecondHand;
-};
-
-static const FoFWeaponHandPair_t s_FoFWeaponHandPairs[] =
-{
-	{ "weapon_ghostgun",         "weapon_ghostgun2" },
-	{ "weapon_deringer",         "weapon_deringer2" },
-	{ "weapon_volcanic",         "weapon_volcanic2" },
-	{ "weapon_coltnavy",         "weapon_coltnavy2" },
-	{ "weapon_sawedoff_shotgun", "weapon_sawedoff_shotgun2" },
-	{ "weapon_hammerless",       "weapon_hammerless2" },
-	{ "weapon_remington_army",   "weapon_remington_army2" },
-	{ "weapon_maresleg",         "weapon_maresleg2" },
-	{ "weapon_schofield",        "weapon_schofield2" },
-	{ "weapon_peacemaker",       "weapon_peacemaker2" },
-	{ "weapon_walker",           "weapon_walker2" },
-	{ "weapon_whiskey",          "weapon_whiskey2" }
-};
 
 bool FoFIsRevolverWeapon( const CBaseCombatWeapon *pWeapon )
 {
@@ -40,85 +19,26 @@ const char *FoFGetOppositeHandWeaponClassname( const char *pszClassname )
 	if ( !pszClassname )
 		return NULL;
 
-	for ( int i = 0; i < ARRAYSIZE( s_FoFWeaponHandPairs ); ++i )
-	{
-		const FoFWeaponHandPair_t &pair = s_FoFWeaponHandPairs[i];
-		if ( !Q_stricmp( pszClassname, pair.m_pszFirstHand ) )
-			return pair.m_pszSecondHand;
-		if ( !Q_stricmp( pszClassname, pair.m_pszSecondHand ) )
-			return pair.m_pszFirstHand;
-	}
+	// The dormant ghost gun is not part of the purchase catalogue.
+	if ( !Q_stricmp( pszClassname, "weapon_ghostgun" ) )
+		return "weapon_ghostgun2";
+	if ( !Q_stricmp( pszClassname, "weapon_ghostgun2" ) )
+		return "weapon_ghostgun";
 
-	return NULL;
+	const FoFItemDefinition_t *pItem =
+		FoFFindItemDefinitionByClassname( pszClassname );
+	if ( !pItem || !pItem->m_pszOppositeHandClassname )
+		return NULL;
+	return !Q_stricmp( pszClassname, pItem->m_pszClassname ) ?
+		pItem->m_pszOppositeHandClassname : pItem->m_pszClassname;
 }
 
 int FoFWeaponTier( CBaseCombatWeapon *pWeapon )
 {
-	if ( !pWeapon )
-		return -2;
-
-	struct FoFWeaponTierName_t
-	{
-		const char *pszClassname;
-		int nTier;
-	};
-
-	// Original item-definition table queried by CFoF_Player::BumpWeapon.
-	// Grand Elimination promotes a player to outlaw only when this value is
-	// greater than one.  Keep the immutable classification shared so client
-	// and server code never grow independent weapon tables.
-	static const FoFWeaponTierName_t s_WeaponTiers[] =
-	{
-		{ "weapon_fists", -2 },
-		{ "weapon_fists_ghost", -2 },
-		{ "weapon_ghostgun", -2 },
-		{ "weapon_ghostgun2", -2 },
-		{ "weapon_xbow", -2 },
-		{ "weapon_knife", 0 },
-		{ "weapon_deringer", 0 },
-		{ "weapon_deringer2", 0 },
-		{ "weapon_dynamite", 0 },
-		{ "weapon_volcanic", 0 },
-		{ "weapon_volcanic2", 0 },
-		{ "weapon_coltnavy", 0 },
-		{ "weapon_coltnavy2", 0 },
-		{ "weapon_hammerless", 0 },
-		{ "weapon_hammerless2", 0 },
-		{ "weapon_remington_army", 0 },
-		{ "weapon_remington_army2", 0 },
-		{ "weapon_maresleg", 0 },
-		{ "weapon_maresleg2", 0 },
-		{ "weapon_carbine", 0 },
-		{ "weapon_axe", 1 },
-		{ "weapon_bow", 1 },
-		{ "weapon_sawedoff_shotgun", 1 },
-		{ "weapon_sawedoff_shotgun2", 1 },
-		{ "weapon_schofield", 1 },
-		{ "weapon_schofield2", 1 },
-		{ "weapon_henryrifle", 1 },
-		{ "weapon_whiskey", 1 },
-		{ "weapon_whiskey2", 1 },
-		{ "weapon_peacemaker", 2 },
-		{ "weapon_peacemaker2", 2 },
-		{ "weapon_bow_black", 2 },
-		{ "weapon_coachgun", 2 },
-		{ "weapon_spencer", 2 },
-		{ "weapon_dynamite_black", 2 },
-		{ "weapon_machete", 3 },
-		{ "weapon_shotgun", 3 },
-		{ "weapon_sharps", 3 },
-		{ "weapon_walker", 3 },
-		{ "weapon_walker2", 3 },
-		{ "weapon_dynamite_belt", 3 },
-	};
-
-	const char *pszClassname = pWeapon->GetClassname();
-	for ( int i = 0; pszClassname && i < ARRAYSIZE( s_WeaponTiers ); ++i )
-	{
-		if ( !Q_stricmp( pszClassname, s_WeaponTiers[i].pszClassname ) )
-			return s_WeaponTiers[i].nTier;
-	}
-	return -2;
+	// Grand Elimination and purchases use the same retail item tier.
+	const FoFItemDefinition_t *pItem = pWeapon ?
+		FoFFindItemDefinitionByClassname( pWeapon->GetClassname() ) : NULL;
+	return pItem ? pItem->m_nPurchaseTier : -2;
 }
 
 bool FoFWeaponCanChargeThrow( CBaseCombatWeapon *pWeapon )

@@ -1,4 +1,4 @@
-﻿#ifndef FOF_HUD_H
+#ifndef FOF_HUD_H
 #define FOF_HUD_H
 #ifdef _WIN32
 #pragma once
@@ -104,6 +104,7 @@ private:
 	void DrawWide( const wchar_t *text, int x, int y, const Color &color, bool centered = false ) const;
 	void DrawWrappedWide( const wchar_t *text, vgui::HFont font, int x, int y,
 		int maxWide, int maxTall, const Color &color, int align ) const;
+	void ClearWrappedTextCache();
 	void DrawAnsi( const char *text, int x, int y, const Color &color, bool centered = false ) const;
 	void PaintBBNotices();
 	void PaintSourceTVPlayerInfo();
@@ -197,6 +198,9 @@ private:
 	void PaintCaptureMessage();
 	void PaintCaptureMarkers();
 
+	// A Course slide has up to fifteen labels; leave one slot for menu text.
+	mutable FoFWrappedTextLayout m_WrappedTextCache[16];
+	mutable int m_iNextWrappedTextSlot;
 	vgui::HFont m_hFont;
 	vgui::HFont m_hSmallFont;
 	vgui::HFont m_hHintFont;

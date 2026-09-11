@@ -2695,21 +2695,30 @@ static CFoF_Player *FoFFindBotTarget( CFoFBot *pBot )
 	const int nMode = currentMode.IsValid() ? currentMode.GetInt() : 1;
 	const bool bUnlimitedDetection = nMode != 1 || FoFIsHorseRaceMap() ||
 		( HL2MPRules() && HL2MPRules()->IsTeamplay() );
-	int nConnectedPlayers = 0;
-	for ( int i = 1; i <= gpGlobals->maxClients; ++i )
+	float flDetectionRange = 0.0f;
+	if ( !bUnlimitedDetection )
 	{
-		CBasePlayer *pPlayer = UTIL_PlayerByIndex( i );
-		if ( pPlayer && pPlayer->IsConnected() &&
-			!pPlayer->IsHLTV() && !pPlayer->IsReplay() )
+		int nConnectedPlayers = 0;
+		for ( int i = 1; i <= gpGlobals->maxClients; ++i )
 		{
-			++nConnectedPlayers;
+			CBasePlayer *pPlayer = UTIL_PlayerByIndex( i );
+			if ( pPlayer && pPlayer->IsConnected() &&
+				!pPlayer->IsHLTV() && !pPlayer->IsReplay() )
+			{
+				++nConnectedPlayers;
+			}
 		}
+		const float flPopulation = gpGlobals->maxClients > 0 ?
+			static_cast< float >( nConnectedPlayers ) /
+			static_cast< float >( gpGlobals->maxClients ) : 0.0f;
+		flDetectionRange = RemapValClamped(
+			flPopulation, 0.5f, 0.9f, 2500.0f, 850.0f );
 	}
-	const float flPopulation = gpGlobals->maxClients > 0 ?
-		static_cast< float >( nConnectedPlayers ) /
-		static_cast< float >( gpGlobals->maxClients ) : 0.0f;
-	const float flDetectionRange = RemapValClamped(
-		flPopulation, 0.5f, 0.9f, 2500.0f, 850.0f );
+	const Vector origin = pBot->GetAbsOrigin();
+	const FoFBotRuntimeState_t *pState = FoFGetBotRuntimeState( pBot );
+	const int nAttackStyle = pState ? pState->m_nPrimaryAttackStyle : 3;
+	CBaseCombatWeapon *pWeapon = pBot->GetActiveWeapon();
+	const bool bDynamite = pWeapon && pWeapon->FoFWeaponID() == 5;
 	CFoF_Player *pBest = NULL;
 	float flBestScore = -1000000.0f;
 	for ( int i = 1; i <= gpGlobals->maxClients; ++i )
@@ -2719,11 +2728,13 @@ static CFoF_Player *FoFFindBotTarget( CFoFBot *pBot )
 			continue;
 
 		const float flDistance =
-			( pTarget->GetAbsOrigin() - pBot->GetAbsOrigin() ).Length();
+			( pTarget->GetAbsOrigin() - origin ).Length();
 		if ( !bUnlimitedDetection && flDistance > flDetectionRange )
 			continue;
 
-		const bool bVisible = FoFBotCanSeeTarget( pBot, pTarget );
+		// Visibility only affects the two close-range scoring branches.
+		const bool bVisible = flDistance <= 1000.0f &&
+			FoFBotCanSeeTarget( pBot, pTarget );
 		float flScore = 0.0f;
 		if ( flDistance <= 350.0f )
 		{
@@ -2733,17 +2744,13 @@ static CFoF_Player *FoFFindBotTarget( CFoFBot *pBot )
 		}
 		else if ( flDistance <= 1000.0f )
 		{
-			FoFBotRuntimeState_t *pState = FoFGetBotRuntimeState( pBot );
-			const int nAttackStyle = pState ?
-				pState->m_nPrimaryAttackStyle : 3;
 			flScore = RemapValClamped(
 				flDistance, 350.0f, 1000.0f,
 				nAttackStyle == 1 ? 12.0f : 8.0f, 0.0f );
 			if ( bVisible )
 				flScore += nAttackStyle == 5 ? 6.0f : 2.0f;
 
-			CBaseCombatWeapon *pWeapon = pBot->GetActiveWeapon();
-			if ( pWeapon && pWeapon->FoFWeaponID() == 5 )
+			if ( bDynamite )
 				flScore += 2.0f;
 			if ( bVisible && nAttackStyle != 1 &&
 				pTarget->FInViewCone( pBot ) )
